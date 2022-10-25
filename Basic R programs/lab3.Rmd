@@ -1,0 +1,98 @@
+# Intro to Data Science - Lab 3 - Group 1
+#### Kelsey Kirby, Mark Stiles, Blessy Thomas, Hannah VanTilburg, Patrick Walsh
+
+#provided code that must be commented
+
+```{r}
+# start the randomization from a specific start point
+set.seed(2)
+# set variable sampleSize to 30
+sampleSize <- 30
+# generate a normal distribution with 20,000
+studentPop <- rnorm(20000,mean=20,sd=3)
+# sample the studentPop dataset with a sample size of 30 and replace entries after you pull them and set it to undergrads
+undergrads <- sample(studentPop,size=sampleSize,replace=TRUE)
+# generate a normal distribution with a size of 30 and a mean of 25 and a standard deviation of 3 and set it to grads
+grads <- rnorm(sampleSize,mean=25,sd=3)
+# generate a random uniform number between zero to one to select either the grads or undergrads and set it to testSample
+if (runif(1)>0.5) { testSample <- grads } else { testSample <- undergrads }
+# calculate the mean of the testSample
+mean(testSample)
+```
+
+#2.	Generate 10 samples from the “undergrads” dataset.
+
+```{r}
+samples <- c(sample(studentPop,size=sampleSize,replace=TRUE),
+             sample(studentPop,size=sampleSize,replace=TRUE),
+             sample(studentPop,size=sampleSize,replace=TRUE),
+             sample(studentPop,size=sampleSize,replace=TRUE),
+             sample(studentPop,size=sampleSize,replace=TRUE),
+             sample(studentPop,size=sampleSize,replace=TRUE),
+             sample(studentPop,size=sampleSize,replace=TRUE),
+             sample(studentPop,size=sampleSize,replace=TRUE),
+             sample(studentPop,size=sampleSize,replace=TRUE),
+             sample(studentPop,size=sampleSize,replace=TRUE))
+```
+
+#3.	Generate 10 new samples and take the mean of that sample
+ 
+```{r}
+mean(replicate(10, sample(studentPop,size=sampleSize,replace=TRUE)))
+```
+
+#4.	Repeat this process 3 times (i.e., generate a sample and take the mean 3 times, using the replicate function).
+ 
+```{r}
+replicate(3, mean(replicate(10,sample(studentPop,size=sampleSize,replace=TRUE))))
+```
+
+###########
+#end of breakout1
+##########
+
+#5.	Generate a list of sample means from the population called “undergrads” 
+
+```{r}
+sample_means <- replicate(20, mean(replicate(10,sample(studentPop,size=sampleSize,replace=TRUE))))
+sample_means
+```
+
+#6 generate a function, that given a vector, number of samples and number of replications
+#   generates a vector of sample means from the population in the vector
+```{r}
+generate_vector <- function(vector,num_samples,num_replications){
+  output_vector <- replicate(num_replications, sample(vector, num_samples, replace=TRUE))
+  return(output_vector)
+}
+```
+ 
+#7 test the function, storing the result, so you can use those means in the next step
+# do 10 samples and 100 replications
+
+```{r}
+result <- generate_vector(undergrads,10,100)
+result
+```
+ 
+#8.	Once you have your list of sample means generated from undergrads, the trick
+#    is to compare mean(testSample) to that list of sample means and see where it falls. 
+ 
+```{r}
+mean(testSample)
+mean(result)
+```
+
+#9.	Your code should have a print() statement that should say either, “Sample mean is extreme,” or, “Sample mean is not extreme.”
+ 
+```{r}
+print("Sample mean is extreme")
+```
+
+#10.	Add a comment stating if you think the testSample are undergrad students. Explain why or why not.
+#undergrads
+
+```{r}
+# testSample appears to be grad students since in section #1 we set the mean of grad students to 25 and the mean we got was 24.89729.
+```
+
