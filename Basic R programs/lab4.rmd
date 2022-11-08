@@ -1,0 +1,141 @@
+# Intro to Data Science - Lab 4 - Group 1
+#### Kelsey Kirby, Mark Stiles, Blessy Thomas, Hannah VanTilburg, Patrick Walsh
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Get a frame of data from the CitiBike NYC project using JSON
+```{r}
+library(RCurl)   # For access to Internet data
+library(jsonlite) # For decoding JSON
+```
+
+```{r}
+station_link <- 'https://gbfs.citibikenyc.com/gbfs/en/station_status.json'
+apiOutput <- getURL(station_link) 
+#prettify(apiOutput)
+apiData <- fromJSON(apiOutput) 
+stationStatus <- apiData$data$stations
+cols <- c('num_bikes_disabled','num_docks_disabled', 'station_id',
+          'num_ebikes_available', 'num_bikes_available', 'num_docks_available')
+stationStatus = stationStatus[,cols]
+#stationStatus
+```
+
+#1. Explain what you see if you type in the station_link URL into a browser (in a comment, write what you see)
+```{r}
+#I see text with a lot of repeating values like station_status, station_status, legacy_id, is_installed etc. It's JSON code that represents the citi bike station information. 
+```
+
+#2. Provide a comment explaining each line of code. 
+```{r}
+# This line stores a URL in a variable
+#station_link <- 'https://gbfs.citibikenyc.com/gbfs/en/station_status.json'
+
+# This line uses the url to get the data from the URl 
+#apiOutput <- getURL(station_link) 
+
+# This line writes to the console the values in a heirarchical structure
+#prettify(apiOutput)
+
+# This line converts the string to a JSON object in R
+#apiData <- fromJSON(apiOutput) 
+
+# This line drills down into the object to get the station information, skipping the rest of the request data
+#stationStatus <- apiData$data$stations
+
+# This line creates a new vector of the names of variables in the station data
+#cols <- c('num_bikes_disabled','num_docks_disabled', 'station_id', 'num_ebikes_available', 'num_bikes_available', 'num_docks_available')
+
+# This line subsets the station data by getting all rows but only the 6 variables from the previous vector
+#stationStatus = stationStatus[,cols]
+```
+
+#3. Use str( ) to find out the structure of apiOutput and apiData. Report (via a comment) what you found and explain the difference between these two objects. 
+
+```{r}
+# This is a string of the whole value of the JSON object
+str(apiOutput <- getURL(station_link))
+```
+
+```{r}
+# This is a JSON object which consists of a List of 2 ints and another List
+str(apiData <- fromJSON(apiOutput))
+```
+ 
+#4. The apiOutput object can also be examined with a custom function from the jsonlite package called prettify( ). Run this command and explain what you found (in a comment). 
+```{r}
+# Prettify adds indentation to a JSON string making it easier to read
+prettify(apiOutput)
+```
+
+#5. Explain stationStatus (what type of object, what information is available)
+```{r}
+# stationStatus is a data frame. It contains information (number of bikes disabled, station id, number of docks available etc.) about any single bike station
+str(stationStatus)
+```
+
+#6. Generate a histogram of the number of docks available 
+```{r}
+hist(stationStatus$num_docks_available)
+```
+ 
+#7. Generate a histogram of the number of bikes available 
+```{r}
+hist(stationStatus$num_bikes_available)
+```
+
+#8. How many stations have at least one ebike?
+```{r}
+numEBikes <- nrow(stationStatus[stationStatus$num_ebikes_available > 1,])
+paste("There are", numEBikes, "of stations with at least 1 eBike")
+``` 
+ 
+#9. Explore stations with at least one ebike by creating a new dataframe, that only has stations with at least one eBike. 
+```{r}
+ebikeDF <- stationStatus[stationStatus$num_ebikes_available > 1,]
+str(ebikeDF)
+hist(ebikeDF$num_ebikes_available)
+hist(ebikeDF$num_bikes_available)
+hist(ebikeDF$num_docks_available)
+```
+
+#10. Calculate the mean of ‘num_docks_available’ for this new dataframe. 
+```{r}
+docksMean <- mean(ebikeDF$num_docks_available)
+paste("The mean number of docks available is", docksMean)
+```
+ 
+#11. Calculate the mean of ‘num_docks_available’ for for the full ‘stationStatus’ dataframe. In a comment, explain how different are the two means? 
+```{r}
+allDocksMean <- mean(stationStatus$num_docks_available)
+paste("The mean number of docks available for all stations is", allDocksMean)
+```
+
+#12. Create a new attribute, called ‘stationSize’, which is the total number of “slots” available for a bike (that might, or might not, have a bike in it now). Run a histogram on this variable and review the distribution.
+```{r}
+stationStatus$stationSize <- stationStatus$num_ebikes_available + stationStatus$num_bikes_available + stationStatus$num_docks_available
+hist(stationStatus$stationSize)
+```
+ 
+#13. Use the plot( ) command to produce an X-Y scatter plot with the number of occupied docks on the X-axis and the number of available bikes on the Y-axis. Explain the results plot.
+```{r}
+library(ggplot2)
+# This is the plot of 'unoccupied docks' vs 'available bikes'.There is a negative correlation between empty docks and available bikes because they are directly related. If a bike is available then one less dock is unoccupied and vice versa. 
+ggplot(stationStatus) +
+  aes(x=num_docks_available, y=(num_ebikes_available + num_bikes_available)) +
+  geom_point() +
+  xlab("Number of Docks Available") +
+  ylab("Number of Bikes Available")
+```
+```{r}
+# This is the number of 'occupied docks' (available bikes) vs available bikes. (Not sure if this was a typo). There is a positive correlation between bikes being available and bikes being available
+ggplot(stationStatus) +
+  aes(x=(num_ebikes_available + num_bikes_available), y=(num_ebikes_available + num_bikes_available)) +
+  geom_point() +
+  xlab("Number of Docks Available") +
+  ylab("Number of Bikes Available")
+```
+
+
