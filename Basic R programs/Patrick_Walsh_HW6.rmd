@@ -1,0 +1,170 @@
+# Intro to Data Science - HW 6
+##### Copyright Jeffrey Stanton, Jeffrey Saltz, and Jasmina Tacheva
+
+
+```{r}
+# Enter your name here: Patrick Walsh
+```
+
+
+### Attribution statement: (choose only one and delete the rest)
+
+
+```{r}
+# 1. I did this homework by myself, with help from the book and the professor.
+```
+
+Last assignment we explored **data visualization** in R using the **ggplot2** package. This homework continues to use ggplot, but this time, with maps.  In addition, we will merge datasets using the built-in **merge( )** function, which provides a similar capability to a **JOIN in SQL** (don't worry if you do not know SQL). Many analytical strategies require joining data from different sources based on a **“key”** – a field that two datasets have in common. 
+
+## Step 1: Load the population data
+
+A.	Read the following JSON file, https://intro-datascience.s3.us-east-2.amazonaws.com/cities.json and store it in a variable called **pop**.
+
+Examine the resulting pop dataframe and add comments explaining what each column contains.
+
+
+
+```{r}
+library(tidyverse)
+pop <- url("https://intro-datascience.s3.us-east-2.amazonaws.com/cities.json")
+pop <- jsonlite::fromJSON(pop)  # converts JSON object to R object  
+glimpse(pop)  # View pop dataframe with glimpse()
+
+# There are 7 columns and 1000 rows.
+# 1. city = string that contains a city name
+# 2. growth_from_2000_to_2013 = string that contains a percentage of growth, presumably for population
+# 3. latitude = decimal number that contains the latitude of city location
+# 4. longitude = decimal number that contains the longitude of city location
+# 5. population = string that contains the population of the city
+# 6. rank = string that contains presumably the city ranking in terms of most populated
+# 7. state = string that contains the state in which the city is located
+```
+
+B.	Calculate the **average population** in the dataframe. Why is using mean() directly not working? Find a way to correct the data type of this variable so you can calculate the average (and then calculate the average)
+
+Hint: use **str(pop)** or **glimpse(pop)** to help understand the dataframe
+
+
+```{r}
+# Population is a character, so we must first convert $population to a number so that we can run quantitative
+# analysis on it.
+pop$population <- as.numeric(pop$population)  # convert pop$population to number
+mean(pop$population)
+```
+
+C.	What is the population of the smallest city in the dataframe? Which state is it in?
+
+
+```{r}
+which.min(pop$population)  # returns the index of the smallest population (in this case, index 1000)
+
+pop$state[1000]  # show the state at index 1000
+pop$population[1000]  # show the population at index 1000
+```
+
+## Step 2: Merge the population data with the state name data
+
+D)	Read in the state name .csv file from the URL below into a dataframe named **abbr** (for "abbreviation") – make sure to use the read_csv() function from the tidyverse package: <br>
+https://intro-datascience.s3.us-east-2.amazonaws.com/statesInfo.csv
+
+
+
+```{r}
+abbr <- read_csv("https://intro-datascience.s3.us-east-2.amazonaws.com/statesInfo.csv")
+glimpse(abbr)
+```
+
+E)	To successfully merge the dataframe **pop** with the **abbr** dataframe, we need to identify a **column they have in common** which will serve as the **“key”** to merge on. One column both dataframes have is the **state column**. The only problem is the slight column name discrepancy – in **pop**, the column is called **“state”** and in **abbr** – **“State.”** These names need to be reconciled for the merge() function to work. Find a way to rename **abbr’s “State”** to **match** the **state column in pop**.    
+
+
+```{r}
+abbr <- abbr %>% rename_at('State', ~'state')  # rename 'State' to 'state' in the abbr dataframe
+```
+
+F)	Merge the two dataframes (using the **‘state’ column** from both dataframes), storing the resulting dataframe in **dfNew**.
+
+
+```{r}
+# create a new dataframe using merge() and dataframes pop and abbr. R will merge these dataframes based on existing
+# columns with the same name.
+dfNew <- merge(x=pop, y=abbr)
+```
+
+G)	Review the structure of **dfNew** and explain the columns (aka attributes) in that dataframe.
+
+
+```{r}
+glimpse(dfNew)
+```
+
+## Step 3: Visualize the data
+
+H)	Plot points (on top of a map of the US) for **each city**. Have the **color** represent the **population**.
+
+
+```{r}
+library(ggmap)
+
+bb <- c(left = min(dfNew$longitude),
+        right = max(dfNew$longitude),
+        bottom = min(dfNew$latitude),
+        top = max(dfNew$latitude))
+gmap <- get_stamenmap(bbox = bb, zoom=4, maptype="terrain")
+ggmap(gmap) + 
+  geom_point(data=dfNew, aes(x=longitude, y=latitude, color=population))
+```
+
+I)	Add a block comment that criticizes the resulting map. It’s not very good.
+
+
+```{r}
+# The color used to represent the size of the population is not very intuitive, as the shades of color are 
+# very similar from one population to another. It might be better to use size of the plot points to better 
+# visualize population sizes on the map.
+```
+
+## Step 4: Group by State
+
+
+J)	Use group_by and summarise to make a dataframe of state-by-state population. Store the result in **dfSimple**.
+
+
+```{r}
+library(dplyr)
+
+dfSimple = dfNew %>% group_by(state) %>%
+					summarise(population = sum(population))
+glimpse(dfSimple)
+
+```
+
+K)	Name the most and least populous states in **dfSimple** and show the code you used to determine them.
+
+
+```{r}
+largest_pop <- which.max(dfSimple$population)  # get the index of the largest population and save it to variable largest_pop
+dfSimple$state[largest_pop]  # display the state at the index with the largest population
+
+smallest_pop <- which.min(dfSimple$population)  # get the index of the smallest population and save it to variable smallest_pop
+dfSimple$state[smallest_pop]  # display the state at the index with the smallest population
+```
+
+## Step 5: Create a map of the U.S.,  with the color of the state representing the state population
+
+L) Make sure to expand the limits correctly and that you have used **coord_map** appropriately.
+
+
+
+```{r}
+dfSimple$state <- tolower(dfSimple$state)
+
+states <- map_data("state")
+mergedData <- merge(states, dfSimple, all.x=TRUE, by.x="region", by.y="state")
+
+ggplot(mergedData)+
+  geom_polygon(data=mergedData, aes(x=long,y=lat,group=group, fill=population))+
+  expand_limits(x=mergedData$long, y=mergedData$lat)+
+  coord_map()+
+  ggtitle("Population of the U.S. by State")
+
+```
