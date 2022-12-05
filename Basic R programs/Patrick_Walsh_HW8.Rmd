@@ -1,0 +1,230 @@
+# Intro to Data Science HW 8
+##### Copyright Jeffrey Stanton, Jeffrey Saltz, and Jasmina Tacheva
+
+
+```{r}
+# Enter your name here: Patrick Walsh
+```
+
+### Attribution statement: (choose only one and delete the rest)
+
+
+```{r}
+# 1. I did this homework by myself, with help from the book and the professor.
+```
+
+Supervised learning means that there is a **criterion one is trying to predict**. The typical strategy is to **divide data** into a **training set** and a **test set** (for example, **two-thirds training** and **one-third test**), train the model on the training set, and then see how well the model does on the test set. <br>
+
+**Support vector machines (SVM)** are a highly flexible and powerful method of doing **supervised machine learning**.
+
+Another approach is to use **partition trees (rpart)** 
+
+In this homework, we will use another banking dataset to train an SVM model, as well as an rpart model, to **classify potential borrowers into 2 groups of credit risk** – **reliable borrowers** and **borrowers posing a risk**. You can learn more about the variables in the dataset here:<br> https://archive.ics.uci.edu/ml/datasets/Statlog+%28German+Credit+Data%29 <br>
+
+This kind of classification algorithms is used in many aspects of our lives – from credit card approvals to stock market predictions, and even some medical diagnoses. <br>
+
+## Part 1: Load and condition the data  
+
+A.	Read the contents of the following .csv file into a dataframe called **credit**: <br>
+
+https://intro-datascience.s3.us-east-2.amazonaws.com/GermanCredit.csv <br>
+
+You will also need to install( ) and library( ) several other libraries, such as **kernlab** and **caret**.
+
+```{r}
+# install.packages("ggplot2")
+# install.packages("kernlab")
+# install.packages("caret")
+# install.packages("tidyverse")
+
+library(kernlab)
+library(lattice)
+library(ggplot2)
+library(caret)
+library(tidyverse)
+
+credit <- read.csv("https://intro-datascience.s3.us-east-2.amazonaws.com/GermanCredit.csv")
+glimpse(credit)
+```
+
+B.	Which variable contains the outcome we are trying to predict, **credit risk**? For the purposes of this analysis, we will focus only on the numeric variables and save them in a new dataframe called **cred**:
+
+
+```{r}
+# The variable we are trying to predict is credit_risk.
+
+cred <- data.frame(duration=credit$duration, 
+                   amount=credit$amount, 
+                   installment_rate=credit$installment_rate, 
+                   present_residence=credit$present_residence, 
+                   age=credit$age, 
+                   credit_history=credit$number_credits, 
+                   people_liable=credit$people_liable, 
+                   credit_risk=as.factor(credit$credit_risk))
+```
+
+
+C.	Although all variables in **cred** except **credit_risk** are coded as numeric, the values of one of them are also **ordered factors** rather than actual numbers. In consultation with the **data description link** from the intro, write a comment identifying the **factor variable** and briefly **describe** each variable in the dataframe. 
+
+
+```{r}
+# The factor variable in the 'cred' dataframe is $credit_risk. It is a
+# categorical value encoded as 0 or 1.
+
+# The other 7 variables in the 'cred' dataframe are integer values as follows:
+
+# duration - Duration in months, presumably for the loan
+# amount - Amount of the loan
+# installment_rate - Installment rate in percentage of disposable income
+# present_residence - Present residence since, presumably number of years in residence
+# age - age of applicant
+# credit_history - Code 0-4:
+  # 0 : no credits taken/ all credits paid back duly
+  # 1 : all credits at this bank paid back duly
+  # 2 : existing credits paid back duly till now
+  # 3 : delay in paying off in the past
+  # 4 : critical account/ other credits existing (not at this bank)
+# people_liable - Number of people being liable to provide maintenance for loan
+
+glimpse(cred)
+```
+
+## Part 2: Create training and test data sets
+
+A.	Using techniques discussed in class, create **two datasets** – one for **training** and one for **testing**.
+
+
+```{r}
+trainList <- createDataPartition(y=cred$credit_risk, p=0.5, list=FALSE)
+trainSet <- cred[trainList,]
+testSet <- cred[-trainList,]
+```
+
+B.	Use the dim( ) function to demonstrate that the resulting training data set and test data set contain the appropriate number of cases.
+
+
+```{r}
+dim(trainSet)
+```
+
+
+```{r}
+dim(testSet)
+```
+
+## Part 3: Build a Model using SVM
+
+A.	Using the caret package, build a support vector model using all of the variables to predict **credit_risk**
+
+
+```{r}
+SVM_Model <- train(credit_risk ~ ., data=trainSet, method="svmRadial",
+                           preProc=c("center", "scale"))
+```
+
+B. output the model
+
+Hint: explore finalModel in the model
+
+
+```{r}
+print(SVM_Model)
+```
+
+## Part 4: Predict Values in the Test Data and Create a Confusion Matrix
+
+A.	Use the predict( ) function to validate the model against test data. Store the predictions in a variable named **svmPred**.
+
+
+```{r}
+svmPred <- predict(SVM_Model, newData=testSet, type="raw")
+```
+
+B.	The **svmPred** object contains a list of classifications for reliable (=0) or risky (=1) borrowers. Review the contents of **svmPred** using head().
+
+
+```{r}
+head(svmPred)
+```
+
+C.	Calculate a confusion matrix using the table function.
+
+
+```{r}
+cf <- confusionMatrix(svmPred, testSet$credit_risk)
+cf
+```
+
+D.	What is the **accuracy** based on what you see in the confusion matrix?
+
+The diag( ) command can be applied to the results of the table command you ran in the previous step. 
+You can also use sum( ) to get the total of all four cells. Error rate: sum of diagonal vs total table
+
+```{r}
+tp_tn <- sum(diag(cf$table))
+total <- sum(cf$table)
+accuracy <- tp_tn / total
+accuracy
+#  Accuracy = 68.4% (at the time I ran the model)
+```
+
+E.	Compare your calculations with the **confusionMatrix()** function from the **caret** package.
+
+
+```{r}
+# The confusion matrix in section c produced the same accuracy of 68.4%. NOTE: The model accuracy may vary slightly after each training run.
+```
+
+F.	Explain, in a block comment:<br> 1) why it is valuable to have a “test” dataset that is separate from a “training” dataset, and <br>2) what potential ethical challenges this type of automated classification may pose. 
+
+
+```{r}
+#  1) You want to test the model on different data than it is trained on so that the model is not getting biased results. It is similar
+# to how students are not given the direct answers to a test before taking it. Rather, they are giving information that is similar and
+# then tested to see if they have learned the concepts.
+
+#  2) One ethical challenge is that models can become biased if they are given biased or incomplete data. For example, they could discriminate
+# when granting loans for people based on demographics like race or gender.
+```
+
+## Part 5: Now build a tree model (with rpart)
+
+A. Build a model with rpart
+<br>
+Note: you might need to install the e1071 package
+
+
+```{r}
+Rpart_Model <- train(credit_risk ~ ., data=trainSet, method="rpart",
+                           preProc=c("center", "scale"))
+```
+
+B. Visualize the results using  rpart.plot()
+
+
+```{r}
+# install.packages("rpart.plot")
+library(rpart.plot)
+plot(Rpart_Model)
+```
+
+C. Use the **predict()** function to predict the testData, and then generate a confusion matrix to explore the results
+
+
+```{r}
+rpartPred <- predict(Rpart_Model, newData=testSet, type="raw")
+cf2 <- confusionMatrix(rpartPred, testSet$credit_risk)
+cf2
+```
+
+D. Review the attributes being used for this credit decision. Are there any that might not be appropriate, with respect to fairness? If so, which attribute, and how would you address this fairness situation. Answer in a comment block below
+
+
+```{r}
+# One attribute being used to train the model which could lead to biased results is Age. The model may discriminate against
+# applicants based on age, for example, denying loans to people who are younger. One way to mitigate this issue is to remove
+# age from the training features and instead use features like credit history. If a person has good credit, good credit age,
+# a history of making payments on time, keeping low credit utilization, etc., then the person's age does not need to be taken
+# into account when deciding on granting them a loan.
+glimpse(cred)
+```
