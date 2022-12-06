@@ -1,0 +1,103 @@
+# Intro to Data Science - Lab 7 - Group 1
+#### Kelsey Kirby, Mark Stiles, Blessy Thomas, Hannah VanTilburg, Patrick Walsh
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Week 9, in class code
+```{r}
+library(quanteda)
+library(quanteda.textplots)
+library(quanteda.textstats)
+library(tidyverse)
+```
+
+#1. Read in the following data set with read_csv(): https://intro-datascience.s3.us-east-2.amazonaws.com/ClimatePosts.csv Store the data in a data frame called tweetDF. Use glimpse(tweetDF) to summarize the data. Add a comment describing what you see. Make sure to explain what each of the three variables contains. 
+```{r}
+tweetDF <- read_csv("https://intro-datascience.s3.us-east-2.amazonaws.com/ClimatePosts.csv")
+glimpse(tweetDF)
+```
+
+ 
+#2. Use the corpus and tokens commands as shown below. Comment each line of code to explain what they do: 
+```{r}
+tweetCorpus <- corpus(tweetDF$Tweet, docnames=tweetDF$ID)  # assigns Tweet text data into a list
+toks <- tokens(tweetCorpus, remove_punct=TRUE)   # breaks sentences into tokens, removes punctuation
+toks_nostop <- tokens_select(toks, pattern = stopwords("en"), selection = "remove")   # removes stopwords
+```
+
+#3. Next, convert the corpus into a document-feature matrix (DFM), using dfm(), store the result in tweetDFM. 
+```{r}
+tweetDFM <- dfm(toks_nostop)
+```
+
+#4. Type tweetDFM at the console to find out the basic characteristic of the DFM (the number of terms, the number of documents, and the sparsity of the matrix). Write a comment describing what you observe. 
+```{r}
+# The Document-Feature Matrix contains 18 documents, 223 features, and 0 docvars. The features are 93.2% sparse.
+```
+  
+
+#5. Create a wordcloud from the DFM using the following command. Write a comment describing notable features of the wordcloud: textplot_wordcloud(tweetDFM, min_count = 1) 
+```{r}
+# The most notable words inside the wordcloud are 'climate', 'change', and 'global', which suggests that this corpus contains a lot
+# of information on the topic of climate change and its global implications. The second tier of words inside the wordcloud include 'water',
+# 'warming', 'world', 'crisis', 'degrees', and 'planet', which are in line with the main topic.
+textplot_wordcloud(tweetDFM, min_count = 1)
+```
+
+
+#6. Using textstat_frequency() from the quanteda.textstats library, show the 10 most frequent words, and how many times each was used/mentioned
+```{r}
+textstat_frequency(tweetDFM)
+```
+
+
+#7. Next, we will read in dictionaries of positive and negative words to see what we can match up to the text in our DFM. Hereâs a line of code for reading in the list of positive words: 
+URL <- "https://intro-datascience.s3.us-east-2.amazonaws.com/positive-words.txt" 
+posWords <- scan(URL, character(0), sep = "\n") 
+posWords <- posWords[-1:-34] # There should be 2006 positive words 
+```{r}
+URL <- "https://intro-datascience.s3.us-east-2.amazonaws.com/positive-words.txt" 
+posWords <- scan(URL, character(0), sep = "\n") 
+posWords <- posWords[-1:-34]
+```
+
+#8. Explain what the following lines of code does, and comment each line posDFM <- dfm_match(tweetDFM, posWords) posFreq <- textstat_frequency(posDFM) 
+posDFM <- dfm_match(tweetDFM, posWords) 
+posFreq <- textstat_frequency(posDFM)
+```{r}
+posDFM <- dfm_match(tweetDFM, posWords)  # Identifies positive words from the posDFM object inside the tweetDFM object along with their index
+posFreq <- textstat_frequency(posDFM)  # Counts how many of these positive words are found in the tweetDFM object
+```
+
+#9. Explore posFreq - using str() or glimpse(). Explain the fields of posFreq 
+```{r}
+glimpse(posFreq)
+```
+
+
+#10. Output the 10 most frequently occurring positive words (and how often each occurred). 
+```{r}
+top10 <- posFreq %>% arrange(-frequency)
+top10[1:10,]
+```
+
+
+#11. Do the same set of calculations with the negative words. The negative word file is located at: https://intro-datascience.s3.us-east-2.amazonaws.com/negative-words.txt
+```{r}
+URL <- "https://intro-datascience.s3.us-east-2.amazonaws.com/negative-words.txt" 
+negWords <- scan(URL, character(0), sep = "\n") 
+negWords <- negWords[-1:-34]
+
+negDFM <- dfm_match(tweetDFM, negWords)
+negFreq <- textstat_frequency(negDFM)
+glimpse(negFreq)
+```
+
+
+```{r}
+top10 <- negFreq %>% arrange(-frequency)
+top10[1:10,]
+```
+
