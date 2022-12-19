@@ -1,0 +1,1542 @@
+# Intro to Data Science - Final Project - Group 1
+#### Kelsey Kirby, Mark Stiles, Blessy Thomas, Hannah VanTilburg, Patrick Walsh
+
+# Dataset: https://www.kaggle.com/datasets/victorsoeiro/netflix-tv-shows-and-movies?select=titles.csv
+
+# Hide some messaging
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(dplyr)
+library(ggplot2)
+library(modeest)
+library(scales)
+library(stringr)
+library(tidyverse)
+library(quanteda)
+library(quanteda.textplots)
+library(quanteda.textstats)
+library(factoextra)
+library(countrycode)
+library(tidytext)
+library(textdata)
+library(psych)
+library(kernlab)
+library(caret)
+library(yardstick)
+library(e1071)
+library(rpart.plot)
+library(MLmetrics)
+library(neuralnet)
+library(grid)
+library(data.table)
+#library(zoo)
+#library(MASS)
+#library(lmtest)
+#library(car)
+```
+
+# Global Functions
+```{r}
+syracuseOrange <- "#D44500"
+syracuseBlue <- "#0C233f"
+
+formatNumber <- function(numberArg, digitArg=0)
+{
+  return(formatC(numberArg, format="f", big.mark=",", digits=digitArg))
+}
+```
+
+# ##################################################################### #
+# Munging
+
+# Pull in show data and et rid of the empty values for imdb ids and scores
+```{r}
+titlesDF <- read.csv("./Data/victorsoeiro-netflix-tv-shows-and-movies/titles.csv")
+
+emptyIdCond <- titlesDF$imdb_id != ""
+naScoreCond <- !is.na(titlesDF$imdb_score)
+titlesDF <- titlesDF[emptyIdCond & naScoreCond,]
+# Setting type as factor
+titlesDF$type <- as.factor(titlesDF$type)
+# Setting certification as factor
+titlesDF$age_certification <- factor(titlesDF$age_certification, levels = c("TV-Y", "TV-Y7", "TV-G", "G", "TV-PG", "PG", "PG-13", "TV-14", "TV-MA", "R", "NC-17"))
+
+str(titlesDF)
+```
+
+# Box office values
+```{r}
+#https://www.boxofficemojo.com/title/tt1375666/?ref_=bo_se_r_1
+
+#url <- paste("https://cbb.census.gov/arcgis/rest/services/Census_EMS/Census/MapServer/4/query?f=json&resultOffset=0&resultRecordCount=1000&where=STATE%20%3D%20%2725%27&orderByFields=STATE%2CPLACE&outFields=GEOID%2CNAME%2CPLACE%2CSTATE%2CPLACE%2CSTATE%2CSTATE&returnGeometry=false&spatialRel=esriSpatialRelIntersects")
+#  jData <- jsonlite::fromJSON(url)$features$attributes
+#  str(jData)
+```
+
+# Titles Variables
+```{r}
+# id
+# title
+# type
+# description
+# release_year
+# age_certification
+# runtime
+# genres
+# production_countries
+# seasons
+# imdb_id
+# imdb_score
+# imdb_votes
+# tmdb_popularity
+# tmdb_score
+```
+
+# Add in Description Sentiment value
+```{r}
+nrc <- get_sentiments("nrc")
+movieDesc <- titlesDF %>%
+  group_by(imdb_id) %>%
+  unnest_tokens(word, description) %>%
+  filter(!(word %in% stopwords(source = "stopwords-iso")))
+movieDesc <- movieDesc %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(imdb_id) %>% 
+  summarise(sentiment = sum(value))
+
+titlesDF <- merge(titlesDF,movieDesc,by="imdb_id")
+
+titlesDF
+```
+
+# Convert genres into columns
+```{r}
+tempDF <- titlesDF %>% 
+  select(imdb_id, genres) %>% 
+  summarize(imdb_id, genres=gsub("\\[", "", gsub("\\]", "", gsub("'", "", genres)))) %>% 
+  mutate(genres = str_split(genres, ', ')) %>% 
+  unnest_longer(genres) %>%  
+  table
+#head(tempDF)
+tempDF <- as.data.frame.matrix(tempDF)
+tempDF$imdb_id <- rownames(tempDF)
+tempDF <- tempDF[,-tempDF$V1]
+# For Debugging 
+#str(tempDF)
+#anti_join(titlesDF,tempDF,by="imdb_id")
+#str(titlesDF)
+titlesDF <- merge(titlesDF,tempDF,by="imdb_id")
+str(titlesDF)
+```
+
+# Adding column to count how many genres it has listed
+```{r}
+titlesDF <- titlesDF %>% 
+  mutate(genre_list=str_split(gsub("\\[", "", gsub("\\]", "", gsub("'", "", genres))), ", "))
+
+titlesDF$genre_count = sapply(titlesDF$genre_list, length)
+titlesDF <- titlesDF %>% select(-genre_list)
+```
+
+# Split TV and Movies
+```{r}
+moviesDF <- titlesDF[titlesDF$type == "MOVIE",]
+showsDF <- titlesDF[titlesDF$type == "SHOW",]
+print("")
+paste("There are", nrow(moviesDF), "movies after removing empty imdb ids, scores and movies")
+print("")
+paste("There are", nrow(showsDF), "shows after removing empty imdb ids, scores and shows")
+```
+
+# Pull in and Merge Credits Data
+```{r}
+creditsDF <- read.csv("./Data/victorsoeiro-netflix-tv-shows-and-movies/credits.csv")
+```
+
+# Credits Variables
+```{r}
+# person_id
+# id
+# name
+# character
+# role
+```
+
+# DIRECTORS (only for movies)
+```{r}
+directorsDF <- creditsDF[creditsDF$role == "DIRECTOR",] %>% select(id, director=name)
+moviesDF <- merge(moviesDF,directorsDF,by="id")
+str(moviesDF)
+```
+
+# ACTORS to see how many actors appear in more than one film
+```{r}
+actorNames <- creditsDF[creditsDF$role == "ACTOR",]$name
+b <- table(actorNames)
+c <- unlist(b)
+df <- as.data.frame(c)
+df[df$Freq > 1,]
+#ggplot(df[df$Freq > 1,]) + aes(x=Freq) + geom_histogram(fill=syracuseOrange, color="#cccccc", bins=50)
+#actorsDF <- creditsDF[creditsDF$role == "ACTOR",] %>% select(imdb_id=id, actor=name)
+```
+
+# Sentiment Function
+```{r}
+GetImportantWordsWith_TF_IDF <- function(newDF)
+{
+  words <- newDF %>%
+    unnest_tokens(word, description) %>%
+    count(imdb_id, word, sort = TRUE)
+  total_words <- words %>% group_by(imdb_id) %>% summarize(total = sum(n))
+  words <- left_join(words, total_words)
+  words <- words %>%
+    bind_tf_idf(word, imdb_id, n)
+
+  topWords <- words %>%
+    select(-total) %>%
+    arrange(desc(tf_idf))
+  
+  return(topWords)
+}
+```
+
+# Other Sentiment Options
+```{r}
+#TF IDF
+#desc_words <- descriptionDF %>%
+#  unnest_tokens(word, description) %>%
+#  count(title, word, sort = TRUE)
+#total_words <- desc_words %>% group_by(title) %>% summarize(total = sum(n))
+#desc_words <- left_join(desc_words, total_words)
+#desc_words
+
+#desc_words <- desc_words %>%
+#  bind_tf_idf(word, title, n)
+
+#desc_words %>%
+#  select(-total) %>%
+#  arrange(desc(tf_idf))
+
+
+
+# NRC is like fear, joy etc
+#https://www.tidytextmining.com/sentiment.html
+#nrc <- get_sentiments("nrc")
+#movieDesc <- descriptionDF %>%
+#  group_by(imdb_id) %>%
+#  unnest_tokens(word, description) %>%
+#  filter(!(word %in% stopwords(source = "stopwords-iso")))
+#movieDesc <- movieDesc %>%
+#  left_join(nrc)
+#movieDesc
+```
+
+# ###################################################################### #
+# Visual Statistics
+
+# Title Type barchart
+```{r}
+ggplot(titlesDF) + 
+  aes(x=type) + 
+  geom_bar(fill=syracuseOrange, color="#cccccc") +
+  labs(x="", y="") + 
+  ggtitle("Movies vs Shows")
+```
+
+# Shows Pairs
+```{r}
+pairs.panels(showsDF[c("release_year", "runtime", "seasons", "imdb_score", "imdb_votes", "genre_count", "sentiment")], col=syracuseOrange)
+
+pairs(showsDF[c("release_year", "runtime", "seasons", "imdb_score", "imdb_votes", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# Movie Pairs
+```{r}
+pairs(moviesDF[c("release_year", "runtime", "imdb_score", "imdb_votes", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# Descriptive Statistics IMDB Score
+```{r}
+summary(titlesDF$imdb_score)
+summary(showsDF$imdb_score)
+```
+
+# IMDB Distribution
+```{r}
+ggplot(titlesDF) + 
+  aes(x=imdb_score) +
+  geom_histogram(fill=syracuseOrange, color="#cccccc") +
+  labs(x="", y="") + 
+  ggtitle("Frequency of IMDB Scores") + 
+  geom_vline(xintercept = mean(titlesDF$imdb_score))
+```
+
+# IMDB Show Distribution
+```{r}
+ggplot(showsDF) + 
+  aes(x=imdb_score) +
+  geom_histogram(fill=syracuseOrange, color="#cccccc") +
+  labs(x="", y="") + 
+  ggtitle("Frequency of IMDB TV Scores")
+```
+
+# TMDB Distribution
+```{r}
+ggplot(titlesDF) + 
+  aes(x=tmdb_score) +
+  geom_histogram(fill=syracuseOrange, color="#cccccc") +
+  labs(x="", y="") + 
+  ggtitle("Frequency of TMDB Scores")
+```
+
+# Descriptive Statistics for IMDB Votes
+```{r}
+summary(titlesDF$imdb_votes)
+summary(showsDF$imdb_votes)
+```
+
+# IMDB Vote Count (less than 20 Thousand)
+```{r}
+ggplot(titlesDF[titlesDF$imdb_votes < 20000,]) + 
+  aes(x=imdb_votes) +
+  geom_histogram(fill=syracuseOrange, color="#cccccc", bins=50) +
+  labs(x="Number of Votes", y="Number of Movies") + 
+  ggtitle("Frequency of IMDB votes")
+```
+
+# Movie Runtime Count
+```{r}
+ggplot(moviesDF) + 
+  aes(x=runtime) +
+  geom_histogram(fill=syracuseOrange, color="#cccccc", bins=50) +
+  labs(x="", y="") + 
+  ggtitle("Frequency of Runtimes")
+```
+
+# Shows Runtime Count
+```{r}
+ggplot(showsDF) + 
+  aes(x=runtime) +
+  geom_histogram(fill=syracuseOrange, color="#cccccc", bins=50) +
+  labs(x="", y="") + 
+  ggtitle("Frequency of Runtimes")
+```
+
+# Movies Runtime vs IMDB Score
+```{r}
+ggplot(moviesDF) +
+  aes(x=runtime, y=imdb_score, size=imdb_votes, alpha=0.1) +
+  geom_point(color=syracuseOrange) +
+  labs(x="Minutes", y="", size="IMDB Votes", alpha="") +
+  geom_smooth(method=lm, color=syracuseOrange) +
+  ggtitle("IMDB Score by Runtime")
+```
+
+# Movie IMDB Vote Outliers
+```{r}
+ggplot(moviesDF[moviesDF$imdb_votes > 1000000,]) +
+  aes(x=imdb_votes, y=title, size=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="Votes", y="", size="IMDB Score") +
+  geom_smooth(method=lm, color=syracuseOrange) +
+  ggtitle("Outliers: More than 1 Million IMDB Votes") 
+```
+
+# Movie Runtime Outliers > 200 min
+```{r}
+ggplot(moviesDF[moviesDF$runtime > 200,]) +
+  aes(x=runtime, y=title, size=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="Minutes", y="", size="IMDB Score") +
+  geom_smooth(method=lm, color=syracuseOrange) +
+  ggtitle("Outliers: More than 200 min runtime")
+```
+
+# Shows Runtime vs IMDB Score
+```{r}
+ggplot(showsDF) +
+  aes(x=runtime, y=imdb_score, size=imdb_votes, alpha=0.1) +
+  geom_point(color=syracuseOrange) +
+  labs(x="Minutes", y="", size="IMDB Votes", alpha="") +
+  geom_smooth(method=lm, color=syracuseOrange, show.legend = FALSE) +
+  ggtitle("IMDB Score by Runtime")
+```
+
+# Shows IMDB Vote Outliers
+```{r}
+ggplot(showsDF[showsDF$imdb_votes > 500000,]) +
+  aes(x=imdb_votes, y=title, size=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="Votes", y="", size="IMDB Score") +
+  geom_smooth(method=lm, color=syracuseOrange) +
+  ggtitle("Outliers: More than 500 Thousand IMDB Votes") 
+```
+
+# Shows Runtime Outliers > 100 min
+```{r}
+ggplot(showsDF[showsDF$runtime > 100,]) +
+  aes(x=runtime, y=title, size=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="", y="", size="IMDB Score") +
+  geom_smooth(method=lm, color=syracuseOrange) +
+  ggtitle("Outliers: More than 100 min runtime")
+```
+
+# Runtime vs TMDB
+```{r}
+ggplot(showsDF) +
+  aes(x=runtime, y=tmdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="Minutes", y="") +
+  geom_smooth(method=lm, color=syracuseOrange) +
+  ggtitle("Runtime vs TMDB Score")
+```
+
+# IMDB Score vs TMDB Score
+```{r}
+ggplot(showsDF) +
+  aes(x=imdb_score, y=tmdb_score, alpha=runtime) +
+  geom_point(color=syracuseOrange) +
+  labs(x="IMDB", y="TMDB", alpha="Runtime") +
+  geom_smooth(method=lm, color=syracuseOrange) +
+  ggtitle("IMDB vs TMDB Score")
+```
+
+# Release Year Plot
+```{r}
+yearCount <- titlesDF %>% group_by(release_year) %>% summarise(count = n(), imdb_score)
+
+ggplot(yearCount) +
+  aes(release_year, count, alpha=imdb_score) +
+  geom_line(color=syracuseOrange) +
+  labs(x="", y="", alpha="IMDB Score") +
+  ggtitle("All titles by Year") + 
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+```
+
+# IMDB Score by Year
+```{r}
+ggplot(titlesDF) +
+  aes(x=release_year, y=imdb_score, color=type, shape=type) +
+  geom_point() +
+  labs(x="", y="", color="Type", shape="Type") +
+  ggtitle("IMDB Score by Year") + 
+  geom_smooth(method=lm, color=syracuseOrange) +
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+```
+
+# Shows IMDB Score by Number of Seasons
+```{r}
+ggplot(showsDF) +
+  aes(x=seasons, y=imdb_score, alpha=imdb_score) +
+  geom_point(color=syracuseOrange, show.legend = FALSE) + 
+  labs(x="Seasons", y="", size="IMDB Score") +
+  ggtitle("IMDB Score by Number of Seasons") +
+  geom_smooth(method=lm, color=syracuseOrange, show.legend = FALSE)
+```
+
+# Shows IMDB Score by Number of Seasons (remove outliers)
+```{r}
+
+ggplot(showsDF[showsDF$seasons > 15,]) + 
+  aes(x=seasons, y=title, size=seasons) +
+  geom_point(color=syracuseOrange, show.legend = FALSE) +
+  labs(x="", y="") + 
+  ggtitle("Outliers: More than 15 Seasons")
+```
+
+# Shows Wordcloud
+```{r}
+png(file = "tv-wordcloud.png", width = 4800, height = 4800, units = "px", pointsize = 12, bg = "white", res = 300, restoreConsole = TRUE)
+textplot_wordcloud(BuildWordCloud(showsDF), min_size = 0.5, max_size = 3, min_count = 20, color = syracuseOrange,  ordered_color = FALSE)
+dev.off()
+```
+
+# Movies Age Certification Counts
+```{r}
+mCertCount <- moviesDF %>% group_by(age_certification) %>% summarise(count = n(), score=mean(imdb_score))
+
+ggplot(mCertCount[!is.na(mCertCount$age_certification),]) +
+  aes(x=reorder(age_certification, count), y=count, size=score) +
+  geom_point(color=syracuseOrange) + 
+  labs(x="", y="", size="Average IMDB Score") +
+  ggtitle("Movie Certification Counts")
+```
+
+# Shows Age Certification Counts
+```{r}
+certCount <- showsDF %>% group_by(age_certification) %>% summarise(count = n(), score=mean(imdb_score))
+
+ggplot(certCount[!is.na(certCount$age_certification),]) +
+  aes(x=reorder(age_certification, count), y=count, size=score) +
+  geom_point(color=syracuseOrange) + 
+  labs(x="", y="", size="Average IMDB Score") +
+  ggtitle("TV Certification Counts")
+```
+
+# Age Certification by IMDB Score
+```{r}
+ggplot(moviesDF[!is.na(moviesDF$age_certification),]) +
+  aes(x=reorder(age_certification, imdb_score), y=imdb_score) +
+  labs(x="", y="") +
+  geom_jitter(shape=16, position=position_jitter(0.4), show.legend = FALSE, color=syracuseOrange) +
+  geom_boxplot(outlier.colour=syracuseOrange, outlier.shape=16, outlier.size=2, show.legend=FALSE, color=syracuseOrange) +
+  ggtitle("Movie Certification by IMDB Score")
+```
+
+# Age Certification by IMDB Score
+```{r}
+ggplot(showsDF[!is.na(showsDF$age_certification),]) +
+  aes(x=age_certification, y=imdb_score) +
+  labs(x="", y="") +
+  #geom_jitter(shape=16, position=position_jitter(0.4), show.legend = FALSE, color=syracuseOrange) +
+  geom_boxplot(outlier.colour=syracuseOrange, outlier.shape=16, outlier.size=2, show.legend=FALSE, color=syracuseOrange) +
+  ggtitle("IMDB Score by TV Certification")
+```
+
+# Highest IMDB Rated Show
+```{r}
+topIMDB <- showsDF %>% arrange(-imdb_score) %>% summarise(title, imdb_score, imdb_votes)
+
+ggplot(topIMDB[1:20,]) +
+  aes(y=imdb_score, x=reorder(title,-imdb_score), alpha=imdb_votes) +
+  geom_bar(position="dodge",stat="identity", fill=syracuseOrange) +
+  labs(x="", y="", alpha="IMDB Votes") +
+  ggtitle("Top 20 Shows by IMDB Score") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  scale_y_continuous(breaks=seq(0, 10, by=1))
+```
+
+# Highest TMDB Rated Show
+```{r}
+topTMDB <- showsDF %>% arrange(-tmdb_score) %>% summarise(title, tmdb_score)
+
+ggplot(topTMDB[1:20,]) +
+  aes(y=tmdb_score, x=reorder(title,-tmdb_score)) +
+  geom_bar(position="dodge",stat="identity", fill=syracuseOrange) +
+  labs(x="", y="", alpha="TMDB Votes") +
+  ggtitle("Top 20 Shows by TMDB Score") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  scale_y_continuous(breaks=seq(0, 10, by=1))
+```
+
+# Highest Rated Directors
+```{r}
+directorScores <- moviesDF %>% group_by(director) %>% summarise(AverageScore=mean(imdb_score), AverageVotes=mean(imdb_votes))
+
+ggplot(directorScores[1:20,]) +
+  aes(x=AverageScore, y=reorder(director,AverageScore)) +
+  geom_bar(position="dodge",stat="identity", fill=syracuseOrange) +
+  labs(x="", y="") +
+  ggtitle("Top 20 Directors by IMDB Score")
+```
+
+# Country choropleth
+```{r}
+#https://www.r-bloggers.com/2017/02/how-to-make-a-global-map-in-r-step-by-step/
+countryDF <- titlesDF %>% 
+  select(imdb_id, production_countries) %>% 
+  summarize(imdb_id, production_countries=gsub("\\[", "", gsub("\\]", "", gsub("'", "", production_countries)))) %>% 
+  mutate(production_countries = str_split(production_countries, ', ')) %>% 
+  unnest_longer(production_countries) %>%  
+  table
+
+countryDF <- colSums(countryDF)
+country_code <- names(countryDF)
+country_values <- as.vector(countryDF)
+countryDF <- data.frame(country_code)
+countryDF$country_code <- as.factor(countryDF$country_code)
+countryDF$country_name <- countrycode(countryDF$country_code, "iso2c", "country.name")
+countryDF$country_name <- recode(countryDF$country_name,'United States' = 'USA', 'United Kingdom' = 'UK')
+countryDF$movie_count <- country_values
+countryDF <- countryDF[-1,]
+countryDF <- countryDF %>% select(country_name, movie_count)
+#str(countryDF)
+
+#ggplot(countryDF[countryDF$count > 30,]) + 
+#  aes(x=reorder(country_code, -count), y=count) +
+#  geom_bar(position="dodge",stat="identity", fill=syracuseOrange, color="#cccccc") +
+#  labs(x="", y="") + 
+#  ggtitle("Frequency of IMDB Scores") +
+#  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+png(file = "world.png", width = 4800, height = 4800, units = "px", pointsize = 12, bg = "white", res = 300, restoreConsole = TRUE)
+world <- map_data("world") %>% filter(lat > -60)
+world <- left_join(world, countryDF, by = c('region' = 'country_name'))
+worldmap <- ggplot(world) +
+  aes(x = long, y =lat, group=group, alpha=movie_count) + 
+  geom_polygon(color="black", fill=syracuseOrange) +
+  labs(x="", y="", alpha="Movie Count") +
+  ggtitle("Title Production by Country") +
+  guides(fill="none") +
+  scale_y_continuous(breaks = (-2:2) * 30) +
+  scale_x_continuous(breaks = (-4:4) * 45) + 
+  theme(text=element_text(color="black") ,panel.background=element_rect(fill="#ffffff"), panel.grid=element_blank(), axis.text=element_blank(), axis.title = element_blank(), axis.ticks = element_blank()) + 
+  coord_map(xlim=c(-180,180)) 
+worldmap
+dev.off()
+```
+
+# Movies and Shows Runtime by Release Year
+```{r}
+ggplot(titlesDF) + 
+  aes(x=release_year, y=runtime, shape=type, color=type) +
+  geom_point() +
+  labs(x="", y="", shape="Type", color="Type") + 
+  ggtitle("Runtime by Year and Type") +
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+```
+
+# Movies Average Runtime by Release Year
+```{r}
+yearlyRuntimes <- moviesDF %>% group_by(release_year) %>% summarise(AverageRuntime = mean(runtime))
+
+ggplot(yearlyRuntimes) +
+  aes(x=release_year, y=AverageRuntime) +
+  geom_line(color=syracuseOrange) +
+  labs(x="", y="Minutes") +
+  ggtitle("Average Movie Runtime by Year") + 
+  geom_smooth(color=syracuseOrange) +
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+```
+
+# Shows Average Runtime by Release Year
+```{r}
+yearlyRuntimes <- showsDF %>% group_by(release_year) %>% summarise(AverageRuntime = mean(runtime))
+
+ggplot(yearlyRuntimes) +
+  aes(x=release_year, y=AverageRuntime) +
+  geom_line(color=syracuseOrange) +
+  labs(x="", y="Minutes") +
+  ggtitle("Average Show Runtime by Year") + 
+  geom_smooth(color=syracuseOrange) +
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+```
+
+# Show: Runtime by Release Year + Score
+```{r}
+ggplot(showsDF) +
+  aes(x=release_year, y=runtime, alpha=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="", y="Minutes", alpha="IMDB Score") +
+  ggtitle("TV Runtime by Year") + 
+  geom_smooth(method=lm, color=syracuseOrange) +
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+```
+
+# Movie: Runtime by Release Year + Score
+```{r}
+ggplot(moviesDF) +
+  aes(x=release_year, y=runtime, alpha=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="", y="Minutes", alpha="IMDB Score") +
+  ggtitle("Movie Runtime by Year") + 
+  geom_smooth(method=lm, color=syracuseOrange) +
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+```
+
+# Movie: Sentiment by Release Year + Score
+```{r}
+ggplot(moviesDF) +
+  aes(x=release_year, y=sentiment, alpha=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="", y="Minutes", alpha="IMDB Score") +
+  ggtitle("Movie Runtime by Year") + 
+  geom_smooth(method=lm, color=syracuseOrange) +
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+```
+
+# Shows: IMDB Score by IMDB Votes
+```{r}
+ggplot(showsDF) +
+  aes(x=imdb_votes, y=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="", y="", alpha="IMDB Score") +
+  ggtitle("IMDB Score by Votes") + 
+  geom_smooth(method=lm, color=syracuseOrange) 
+```
+
+# Shows: IMDB Score by IMDB Votes (Closer Look > 500000)
+```{r}
+ggplot(showsDF[showsDF$imdb_votes > 400000,]) +
+  aes(x=imdb_votes, y=title) +
+  geom_point(color=syracuseOrange) +
+  labs(x="", y="", alpha="IMDB Score") +
+  ggtitle("Outliers: More than 400k Votes") + 
+  geom_smooth(method=lm, color=syracuseOrange) 
+```
+
+# Shows: IMDB Score by Sentiment
+```{r}
+ggplot(showsDF) +
+  aes(x=sentiment, y=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="Sentiment Value", y="", alpha="IMDB Score") +
+  ggtitle("IMDB Score by Description Sentiment") + 
+  geom_smooth(method=lm, color=syracuseOrange) 
+```
+
+# Shows: IMDB Score by Sentiment (Closer Look > 20)
+```{r}
+ggplot(showsDF[showsDF$sentiment > 15,]) +
+  aes(x=sentiment, y=title) +
+  geom_point(color=syracuseOrange) +
+  labs(x="Sentiment Value", y="", alpha="IMDB Score") +
+  ggtitle("Outliers: Description Sentiment > 20") + 
+  geom_smooth(method=lm, color=syracuseOrange) + 
+  scale_x_continuous(breaks=seq(10, 30, by=5))
+```
+
+# Shows: IMDB Score by Sentiment (Closer Look < -10)
+```{r}
+ggplot(showsDF[showsDF$sentiment < -10,]) +
+  aes(x=sentiment, y=title) +
+  geom_point(color=syracuseOrange) +
+  labs(x="Sentiment Value", y="", alpha="IMDB Score") +
+  ggtitle("Outliers: Description Sentiment < -10") + 
+  geom_smooth(method=lm, color=syracuseOrange) + 
+  scale_x_continuous(breaks=seq(-20, -10, by=1))
+```
+
+# Shows: IMDB Score by Release Year
+```{r}
+ggplot(showsDF) +
+  aes(x=release_year, y=imdb_score) +
+  geom_point(color=syracuseOrange) +
+  labs(x="", y="", alpha="IMDB Score") +
+  ggtitle("IMDB Score by Release Year") + 
+  geom_smooth(method=lm, color=syracuseOrange) + 
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+```
+
+# Genre Functions
+```{r}
+#action
+#animation
+#comedy
+#crime
+#documentation
+#drama
+#european
+#family
+#fantasy
+#history
+#horror
+#music
+#reality
+#romance
+#scifi
+#sport
+#thriller
+#war
+#western    
+
+BuildWordCloud <- function(fromDF)
+{
+  filteredOverviews <- fromDF %>% filter(!is.na(description)) %>% select(description)
+  overviewCorpus <- corpus(filteredOverviews$description)
+  stop <- c(stopwords("english"), "new", "world", "one", "two", "years", "young", "series", "story", "show")
+  removedStopwords <- tokens(overviewCorpus, remove_punct=TRUE, remove_symbols=TRUE, remove_numbers=TRUE) %>% 
+    tokens_select(stop, selection="remove")
+  newDFM <- dfm(removedStopwords)
+  
+  return(newDFM)
+}
+
+GetHighestRatingsByGenre <- function(fromDF, genre) 
+{
+  genreReceipts <- fromDF[!is.na(fromDF$imdb_score),] %>% 
+    group_by(release_year) %>% 
+    summarise(AverageScore = mean(imdb_score), Genre=genre, Runtime=mean(runtime))
+
+  maxPos <- which.max(genreReceipts$AverageScore)
+  highestYear <- genreReceipts[maxPos,]
+  return(highestYear)
+}
+
+GetGenreName <- function(data)
+{
+  newName <- paste(data$genre, data$release_year, sep=" - ")
+  
+  return(newName)
+}
+
+GenerateClusters <- function(clusterDF, clusterCount)
+{
+  df <- clusterDF
+  df <- na.omit(df)
+  rownames(df) <- df$imdb_id
+  df <- df %>% select(release_year, runtime)
+  df <- scale(df)
+  #png(file = "action.png", width = 4800, height = 4800, units = "px", pointsize = 12, bg = "white", res = 300, restoreConsole = TRUE)
+  km <- kmeans(df, centers = clusterCount, nstart = 25)
+  fviz_cluster(km, data = df)
+  #dev.off()
+}
+
+SelectGenreData <- function(genreDF, genreName)
+{
+  newDF <- genreDF %>% mutate(genre=genreName) %>% select(title, description, imdb_id, imdb_score, imdb_votes, release_year, runtime, genre)
+  return(newDF)
+}
+
+GetTitlesByGenre <- function(startDF)
+{
+  actionTitles <- SelectGenreData(startDF[startDF$action == 1,], "Action")
+  animationTitles <- SelectGenreData(startDF[startDF$animation == 1,], "Animation")
+  comedyTitles <- SelectGenreData(startDF[startDF$comedy == 1,], "Comedy")
+  crimeTitles <- SelectGenreData(startDF[startDF$crime == 1,], "Crime")
+  documentationTitles <- SelectGenreData(startDF[startDF$documentation == 1,], "Documentation")
+  dramaTitles <- SelectGenreData(startDF[startDF$drama == 1,], "Drama")
+  europeanTitles <- SelectGenreData(startDF[startDF$european == 1,], "European")
+  familyTitles <- SelectGenreData(startDF[startDF$family == 1,], "Family")
+  fantasyTitles <- SelectGenreData(startDF[startDF$fantasy == 1,], "Fantasy")
+  historyTitles <- SelectGenreData(startDF[startDF$history == 1,], "History")
+  horrorTitles <- SelectGenreData(startDF[startDF$horror == 1,], "Horror")
+  musicTitles <- SelectGenreData(startDF[startDF$music == 1,], "Music")
+  realityTitles <- SelectGenreData(startDF[startDF$reality == 1,], "Reality")
+  romanceTitles <- SelectGenreData(startDF[startDF$romance == 1,], "Romance")
+  scifiTitles <- SelectGenreData(startDF[startDF$scifi == 1,], "SciFi")
+  sportTitles <- SelectGenreData(startDF[startDF$sport == 1,], "Sport")
+  thrillerTitles <- SelectGenreData(startDF[startDF$thriller == 1,], "Thriller")
+  warTitles <- SelectGenreData(startDF[startDF$war == 1,], "War")
+  westernTitles <- SelectGenreData(startDF[startDF$western == 1,], "Western")
+  
+  genreTitles <- data.frame(actionTitles)
+  genreTitles <- rbind(genreTitles, data.frame(animationTitles))
+  genreTitles <- rbind(genreTitles, data.frame(comedyTitles))
+  genreTitles <- rbind(genreTitles, data.frame(crimeTitles))
+  genreTitles <- rbind(genreTitles, data.frame(documentationTitles))
+  genreTitles <- rbind(genreTitles, data.frame(documentationTitles))
+  genreTitles <- rbind(genreTitles, data.frame(dramaTitles))
+  genreTitles <- rbind(genreTitles, data.frame(europeanTitles))
+  genreTitles <- rbind(genreTitles, data.frame(familyTitles))
+  genreTitles <- rbind(genreTitles, data.frame(fantasyTitles))
+  genreTitles <- rbind(genreTitles, data.frame(historyTitles))
+  genreTitles <- rbind(genreTitles, data.frame(horrorTitles))
+  genreTitles <- rbind(genreTitles, data.frame(musicTitles))
+  genreTitles <- rbind(genreTitles, data.frame(realityTitles))
+  genreTitles <- rbind(genreTitles, data.frame(romanceTitles))
+  genreTitles <- rbind(genreTitles, data.frame(scifiTitles))
+  genreTitles <- rbind(genreTitles, data.frame(sportTitles))
+  genreTitles <- rbind(genreTitles, data.frame(thrillerTitles))
+  genreTitles <- rbind(genreTitles, data.frame(warTitles))
+  genreTitles <- rbind(genreTitles, data.frame(westernTitles))
+  
+  genreTitles$genre <- as.factor(genreTitles$genre)
+  
+  return(genreTitles)
+}
+
+GetGenreIMDBSums <- function(startDF)
+{
+  actionIMDBSum <- sum(startDF[startDF$action == 1,]$imdb_score)
+  animationIMDBSum <- sum(startDF[startDF$animation == 1,]$imdb_score)
+  comedyIMDBSum <- sum(startDF[startDF$comedy == 1,]$imdb_score)
+  crimeIMDBSum <- sum(startDF[startDF$crime == 1,]$imdb_score)
+  documentationIMDBSum <- sum(startDF[startDF$documentation == 1,]$imdb_score)
+  dramaIMDBSum <- sum(startDF[startDF$drama == 1,]$imdb_score)
+  europeanIMDBSum <- sum(startDF[startDF$european == 1,]$imdb_score)
+  familyIMDBSum <- sum(startDF[startDF$family == 1,]$imdb_score)
+  fantasyIMDBSum <- sum(startDF[startDF$fantasy == 1,]$imdb_score)
+  historyIMDBSum <- sum(startDF[startDF$history == 1,]$imdb_score)
+  horrorIMDBSum <- sum(startDF[startDF$horror == 1,]$imdb_score)
+  musicIMDBSum <- sum(startDF[startDF$music == 1,]$imdb_score)
+  realityIMDBSum <- sum(startDF[startDF$reality == 1,]$imdb_score)
+  romanceIMDBSum <- sum(startDF[startDF$romance == 1,]$imdb_score)
+  scifiIMDBSum <- sum(startDF[startDF$scifi == 1,]$imdb_score)
+  sportIMDBSum <- sum(startDF[startDF$sport == 1,]$imdb_score)
+  thrillerIMDBSum <- sum(startDF[startDF$thriller == 1,]$imdb_score)
+  warIMDBSum <- sum(startDF[startDF$war == 1,]$imdb_score)
+  westernIMDBSum <- sum(startDF[startDF$western == 1,]$imdb_score)
+  
+  genreNames <- c("action", "animation", "comedy", "crime", "documentation", "drama", "european", "family", "fantasy", "history", "horror", "music", "reality", "romance", "scifi", "sport", "thriller", "war", "western")
+  
+  genreSums <- c(actionIMDBSum, animationIMDBSum, comedyIMDBSum, crimeIMDBSum, documentationIMDBSum, dramaIMDBSum, europeanIMDBSum, familyIMDBSum, fantasyIMDBSum, historyIMDBSum, horrorIMDBSum, musicIMDBSum, realityIMDBSum, romanceIMDBSum, scifiIMDBSum, sportIMDBSum, thrillerIMDBSum, warIMDBSum, westernIMDBSum)
+  
+  genreSumList <- data.frame(genreNames, genreSums)
+  
+  return(genreSumList)
+}
+
+#ggsave("figure2b.png", dpi=300, dev='png', height=4.5, width=6.5, units="in")
+
+```
+
+# Get Unique List of Genres and counts
+```{r}     
+genreBreakdown <-as.data.frame(table(unlist(str_split(gsub("\\[", "", gsub("\\]", "", gsub("'", "", titlesDF$genres))), ", "))))
+ggplot(genreBreakdown) + 
+  aes(x=reorder(Var1,-Freq), y=Freq) + 
+  geom_bar(position="dodge",stat="identity", fill=syracuseOrange, colour="#cccccc") +
+  labs(x="", y="") +
+  ggtitle("Title Count by Genre") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), plot.margin=margin(l = 40))
+```
+
+# Movie Genre count by score
+```{r}
+ggplot(moviesDF) +
+  aes(x=genre_count, y=imdb_score, alpha=0.2) +
+  geom_jitter(shape=16, position=position_jitter(0.4), show.legend = FALSE, color=syracuseOrange) +
+  labs(x="Number of Genres", y="") +
+  ggtitle("Movie Genre Count by IMDB Score") + 
+  geom_smooth(method=lm, color=syracuseOrange, show.legend = FALSE) +
+  scale_x_continuous(breaks=seq(0, 10, by=1)) +
+  scale_y_continuous(breaks=seq(0, 10, by=1))
+```
+
+# TV Genre count by score
+```{r}
+ggplot(showsDF) +
+  aes(x=genre_count, y=imdb_score, alpha=0.2) +
+  geom_jitter(shape=16, position=position_jitter(0.4), show.legend = FALSE, color=syracuseOrange) +
+  labs(x="Number of Genres per Show", y="") +
+  ggtitle("IMDB Score by TV Genre Count") + 
+  geom_smooth(method=lm, color=syracuseOrange, show.legend = FALSE) +
+  scale_x_continuous(breaks=seq(0, 10, by=1)) +
+  scale_y_continuous(breaks=seq(0, 10, by=1))
+```
+
+# TV Action WordCloud, Linear Models, Cluster and Scatterplot Pairs
+```{r}
+genreTitles <- showsDF[showsDF$action == 1,]
+genreBestYear <- GetHighestRatingsByGenre(genreTitles, "action")
+topIMDBTitles <- genreTitles %>% arrange(-imdb_score) %>% filter(imdb_score==max(imdb_score)) %>% select(title, imdb_score)
+topYearTitles <- genreTitles[genreTitles$release_year == genreBestYear$release_year,]$title
+paste("The top year: ", genreBestYear$release_year)
+paste("The top rated titles:", paste(unlist(topIMDBTitles), collapse = ', '))
+paste("the top year titles:", paste(unlist(topYearTitles), collapse = ', '))
+#point plot
+ggplot(genreTitles) +
+  aes(x=release_year, y=imdb_score, alpha=runtime) +
+  geom_point(color=syracuseOrange) +
+  labs(x="", y="", alpha="Runtime") +
+  ggtitle("Show IMDB Score by Year") + 
+  geom_smooth(method=lm, color=syracuseOrange) +
+  scale_x_continuous(breaks=seq(1910, 2030, by=10))
+#word cloud
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+#linearModel <- lm(formula = imdb_score ~ release_year + runtime + imdb_votes + seasons, data=genreTitles)
+#print('-----------------------------------------------------------------')
+#summary(linearModel)
+#linearModel <- lm(formula = tmdb_score ~ release_year + runtime + tmdb_popularity + seasons, data=genreTitles)
+#print('-----------------------------------------------------------------')
+#summary(linearModel)
+GenerateClusters(genreTitles, 2)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Animation WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$animation == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Comedy WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$comedy == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Crime WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$crime == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 5, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Documentation WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$documentation == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Drama WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$drama == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 15, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV European WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$european == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Family WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$family == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 5, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Fantasy WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$fantasy == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV History WordCloud
+```{r}    
+genreTitles <- showsDF[showsDF$history == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Horror WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$horror == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Music WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$music == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Reality WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$reality == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Romance WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$romance == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 5, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV SciFi WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$scifi == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 7, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Sport WordCloud
+```{r}   
+genreTitles <- showsDF[showsDF$sport == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Thriller WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$thriller == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 10, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV War WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$war == 1,]
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# TV Western WordCloud
+```{r}
+genreTitles <- showsDF[showsDF$western == 1,]
+genreTitles
+textplot_wordcloud(BuildWordCloud(genreTitles), min_size = 0.5, max_size = 3, min_count = 3, color = syracuseOrange,  ordered_color = FALSE)
+pairs(genreTitles[c("imdb_score", "release_year", "runtime", "imdb_votes", "seasons", "genre_count", "sentiment")], col=syracuseOrange)
+```
+
+# Movie Score by Genre Boxplot
+```{r}
+movieGenreTitles <- GetTitlesByGenre(moviesDF)
+ggplot(movieGenreTitles) +
+  aes(x=reorder(genre, imdb_score), y=imdb_score, color=syracuseOrange) +
+  geom_boxplot(outlier.colour=syracuseOrange, outlier.shape=16, outlier.size=2, show.legend=FALSE) +
+  stat_summary(fun=mean, geom="point", shape=23, size=4, show.legend=FALSE) + 
+  labs(x="", y="") +
+  ggtitle("Movie IMDB Score by Genre") + 
+  geom_smooth(method=lm, color=syracuseOrange) +
+  scale_y_continuous(breaks=seq(0, 10, by=1)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), plot.margin=margin(l = 40))
+```
+
+# TV Score by Genre Boxplot
+```{r}
+showGenreTitles <- GetTitlesByGenre(showsDF)
+ggplot(showGenreTitles) +
+  aes(x=reorder(genre, imdb_score), y=imdb_score, color=syracuseOrange) +
+  geom_boxplot(outlier.colour=syracuseOrange, outlier.shape=16, outlier.size=2, show.legend=FALSE) +
+  stat_summary(fun=mean, geom="point", shape=23, size=4, show.legend=FALSE) + 
+  labs(x="", y="") +
+  ggtitle("TV IMDB Score by Genre") + 
+  geom_smooth(method=lm, color=syracuseOrange) +
+  scale_y_continuous(breaks=seq(0, 10, by=1)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), plot.margin=margin(l = 40))
+```
+
+# Movie Score by Genre Jitter Plot
+```{r}
+ggplot(movieGenreTitles) +
+  aes(x=genre, y=imdb_score, color=genre, alpha=0.1) +
+  geom_jitter(shape=16, position=position_jitter(0.4), show.legend = FALSE) +
+  labs(x="", y="", alpha="") +
+  ggtitle("Movie IMDB Score by Genre") + 
+  scale_y_continuous(breaks=seq(0, 10, by=1)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), plot.margin=margin(l = 40))
+```
+
+# TV Score by Genre Jitter Plot
+```{r}
+ggplot(showGenreTitles) +
+  aes(x=genre, y=imdb_score, alpha=0.1) +
+  geom_jitter(shape=16, position=position_jitter(0.4), show.legend = FALSE, color=syracuseOrange) +
+  labs(x="", y="", alpha="") +
+  ggtitle("TV IMDB Score by Genre") + 
+  scale_y_continuous(breaks=seq(0, 10, by=1)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), plot.margin=margin(l = 40))
+```
+
+# Total Movie Score by Genre
+```{r}
+movieGenreSumList <- GetGenreIMDBSums(moviesDF)
+ggplot(movieGenreSumList) +
+  aes(x=reorder(genreNames, -genreSums), y=genreSums) +
+  geom_bar(position="dodge",stat="identity", fill=syracuseOrange, colour="#cccccc") +
+  labs(x="", y="") +
+  ggtitle("Total Movie IMDB Score by Genre") + 
+  geom_smooth(method=lm, color=syracuseOrange) +
+  scale_y_continuous(breaks=seq(0, 10000, by=1000)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), plot.margin=margin(l = 40))
+```
+
+# Total TV Score by Genre
+```{r}
+tvGenreSumList <- GetGenreIMDBSums(showsDF)
+ggplot(tvGenreSumList) +
+  aes(x=reorder(genreNames, -genreSums), y=genreSums) +
+  geom_bar(position="dodge",stat="identity", fill=syracuseOrange, colour="#cccccc") +
+  labs(x="", y="") +
+  ggtitle("Total TV IMDB Score by Genre") + 
+  geom_smooth(method=lm, color=syracuseOrange) +
+  scale_y_continuous(breaks=seq(0, 10000, by=1000)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), plot.margin=margin(l = 40))
+```
+
+# ##################################################################### #
+# Models
+
+# External Prediction Set
+```{r}
+#actual 8.4
+startrek <- data.frame(release_year=1966, runtime=50, imdb_votes=84707, animation=0, comedy=0, documentation=0, drama=1, european=0, family=0, history=0, reality=0, scifi=1)
+#actual 7.1
+kojak <- data.frame(release_year=1973, runtime=51, imdb_votes=8017, animation=0, comedy=0, documentation=0, drama=1, european=0, family=0, history=0, reality=0, scifi=0)
+#actual 7.8
+lawandorder <- data.frame(release_year=1990, runtime=45, imdb_votes=39318, animation=0, comedy=0, documentation=0, drama=1, european=0, family=0, history=0, reality=0, scifi=0)
+#actual 9
+theoffice <- data.frame(release_year=2005, runtime=22, imdb_votes=594890, animation=0, comedy=1, documentation=0, drama=1, european=0, family=0, history=0, reality=0, scifi=0)
+#actual 7.3
+sexandthecity <- data.frame(release_year=1998, runtime=30, imdb_votes=127750, animation=0, comedy=1, documentation=0, drama=1, european=0, family=0, history=0, reality=0, scifi=0)
+#actual 8.9
+seinfeld <- data.frame(release_year=1989, runtime=22, imdb_votes=318952, animation=0, comedy=1, documentation=0, drama=1, european=0, family=0, history=0, reality=0, scifi=0)
+#actual 8.5
+westworld <- data.frame(release_year=2016, runtime=62, imdb_votes=505008, animation=0, comedy=0, documentation=0, drama=1, european=0, family=0, history=0, reality=0, scifi=1)
+#actual 8.6
+xfiles <- data.frame(release_year=1993, runtime=45, imdb_votes=226602, animation=0, comedy=0, documentation=0, drama=1, european=0, family=0, history=0, reality=0, scifi=1)
+l = list(startrek, kojak, lawandorder, theoffice, sexandthecity, seinfeld, westworld, xfiles)
+externalShows <- rbindlist(l, use.names=TRUE)
+```
+
+# Plot Predictions Function
+```{r}
+PlotPredictions <- function(customModel, modelName, rSquared)
+{
+  #build vector of predicted values
+  showPredictions <- predict(customModel, externalShows)
+  #build vector of show names
+  showNames <- c("Star Trek", "Kojak", "Law and Order", "The Office", "Sex and the City", "Seinfeld", "Westworld", "X-Files")
+  #build vector of actual scores
+  showScores <- c(8.4, 7.1, 7.8, 9, 7.3, 8.9, 8.5, 8.6)
+  #build display DF with both scores and predicted scores in separate rows with a filterable field
+  status1<-rep(c(1),each=length(showNames))
+  status0<-rep(c(0),each=length(showNames))
+  resultsDF <- data.frame(name=c(showNames, showNames), values=c(showScores, showPredictions), status=c(status1, status0))
+  
+  rSquared <- round(rSquared, digits=3)
+  ggplot(resultsDF) + 
+    theme(axis.title.x = element_text(margin=margin(t=10))) +
+    aes(x=name,y=values) + 
+    geom_point(data=resultsDF[resultsDF$status==1,], color=syracuseOrange, size=5) + 
+    geom_point(data=resultsDF[resultsDF$status==0,], color=syracuseBlue, size=4, show.legend = FALSE) + 
+    labs(x=paste("Test Data R-squared:", rSquared), y="") + 
+    ggtitle(paste("Predicted IMDB Score (Blue) vs Actual (Orange) for", modelName))
+}
+
+```
+
+# Partition Data
+```{r}
+
+set.seed(100)
+
+tList <- createDataPartition(y=showsDF$imdb_score, p=.70, list=FALSE)
+showTraining <- showsDF[tList,]
+showTesting <- showsDF[-tList,]
+#str(showTraining)
+```
+
+# Linear Model to Predict IMDB Rating for Shows
+```{r}
+#showModel <- lm(formula = imdb_score ~ release_year + runtime + imdb_votes + genre_count + age_certification + seasons + sentiment + action + animation + comedy + crime + documentation + drama + european + family + fantasy + history + horror + music + reality + romance + scifi + sport + thriller + war + western , data=showTraining)
+
+#resettest(imdb_score ~ release_year + runtime + imdb_votes, power=2:3, type="regressor", data=showsDF)
+#boxTidwell(imdb_score ~ runtime, data=showsDF, tol=0.001, max.iter=25)
+#boxcox(lm(imdb_score ~ release_year + runtime + imdb_votes,data=showsDF),lambda=seq(-2,2,by=.1))
+
+linearModel <- lm(formula = imdb_score ~ log(release_year) + runtime + log(imdb_votes) + animation + documentation + drama + family + reality + scifi, data=showTraining)
+
+summary(linearModel)
+
+linearPred <- predict(linearModel, newdata=showTesting)
+
+rSquared <- R2_Score(linearPred, showTesting$imdb_score)
+
+PlotPredictions(linearModel, "Linear Model", rSquared)
+```
+
+# RPart Model
+```{r}
+tControl <- trainControl(method="repeatedcv", number=100)
+treeModel <- train(imdb_score ~ release_year + runtime + imdb_votes + animation + documentation + drama + family + reality + scifi, data=showTraining, method="rpart", trControl=tControl, tuneLength=10)
+
+rpartPred <- predict(svmModel, newdata=showTesting)
+
+rSquared <- R2_Score(svmPred, showTesting$imdb_score)
+
+rpart.plot(treeModel$finalModel)
+
+PlotPredictions(treeModel$finalModel, "Tree Model", rSquared)
+```
+
+# SVM Model
+```{r}
+#https://www.listendata.com/2017/01/support-vector-machine-in-r-tutorial.html
+tControl <- trainControl(method="none")
+svmModel <- train(imdb_score ~ log(release_year) + runtime + log(imdb_votes) + animation + comedy + documentation + drama + european + family + history + reality + scifi, data=showTraining, method="svmRadial", trControl=tControl, preProcess=c("center", "scale"))
+
+svmPred <- predict(svmModel, newdata=showTesting)
+
+rSquared <- R2_Score(svmPred, showTesting$imdb_score)
+
+PlotPredictions(svmModel, "SVM Model", rSquared)
+```
+
+#Fixing Neural Net Plot to Image
+```{r}
+#https://stackoverflow.com/questions/11866740/having-problems-saving-a-neural-net-plot-using-neuralnet-package-r
+plot.nn <-function (x, rep = NULL, x.entry = NULL, x.out = NULL, radius = 0.15, 
+    arrow.length = 0.2, intercept = TRUE, intercept.factor = 0.4, 
+    information = TRUE, information.pos = 0.1, col.entry.synapse = "black", 
+    col.entry = "black", col.hidden = "black", col.hidden.synapse = "black", 
+    col.out = "black", col.out.synapse = "black", col.intercept = "blue", 
+    fontsize = 12, dimension = 6, show.weights = TRUE, file = NULL, 
+    ...) 
+{
+    net <- x
+    if (is.null(net$weights)) 
+        stop("weights were not calculated")
+    if (!is.null(file) && !is.character(file)) 
+        stop("'file' must be a string")
+    if (is.null(rep)) {
+        for (i in 1:length(net$weights)) {
+            if (!is.null(file)) 
+                file.rep <- paste(file, ".", i, sep = "")
+            else file.rep <- NULL
+            #dev.new()
+            plot.nn(net, rep = i, x.entry, x.out, radius, arrow.length, 
+                intercept, intercept.factor, information, information.pos, 
+                col.entry.synapse, col.entry, col.hidden, col.hidden.synapse, 
+                col.out, col.out.synapse, col.intercept, fontsize, 
+                dimension, show.weights, file.rep, ...)
+        }
+    }
+    else {
+        if (is.character(file) && file.exists(file)) 
+            stop(sprintf("%s already exists", sQuote(file)))
+        result.matrix <- t(net$result.matrix)
+        if (rep == "best") 
+            rep <- as.integer(which.min(result.matrix[, "error"]))
+        if (rep > length(net$weights)) 
+            stop("'rep' does not exist")
+        weights <- net$weights[[rep]]
+        if (is.null(x.entry)) 
+            x.entry <- 0.5 - (arrow.length/2) * length(weights)
+        if (is.null(x.out)) 
+            x.out <- 0.5 + (arrow.length/2) * length(weights)
+        width <- max(x.out - x.entry + 0.2, 0.8) * 8
+        radius <- radius/dimension
+        entry.label <- net$model.list$variables
+        out.label <- net$model.list$response
+        neuron.count <- array(0, length(weights) + 1)
+        neuron.count[1] <- nrow(weights[[1]]) - 1
+        neuron.count[2] <- ncol(weights[[1]])
+        x.position <- array(0, length(weights) + 1)
+        x.position[1] <- x.entry
+        x.position[length(weights) + 1] <- x.out
+        if (length(weights) > 1) 
+            for (i in 2:length(weights)) {
+                neuron.count[i + 1] <- ncol(weights[[i]])
+                x.position[i] <- x.entry + (i - 1) * (x.out - 
+                  x.entry)/length(weights)
+            }
+        y.step <- 1/(neuron.count + 1)
+        y.position <- array(0, length(weights) + 1)
+        y.intercept <- 1 - 2 * radius
+        information.pos <- min(min(y.step) - 0.1, 0.2)
+        if (length(entry.label) != neuron.count[1]) {
+            if (length(entry.label) < neuron.count[1]) {
+                tmp <- NULL
+                for (i in 1:(neuron.count[1] - length(entry.label))) {
+                  tmp <- c(tmp, "no name")
+                }
+                entry.label <- c(entry.label, tmp)
+            }
+        }
+        if (length(out.label) != neuron.count[length(neuron.count)]) {
+            if (length(out.label) < neuron.count[length(neuron.count)]) {
+                tmp <- NULL
+                for (i in 1:(neuron.count[length(neuron.count)] - 
+                  length(out.label))) {
+                  tmp <- c(tmp, "no name")
+                }
+                out.label <- c(out.label, tmp)
+            }
+        }
+        grid.newpage()
+        pushViewport(viewport(name = "plot.area", width = unit(dimension, 
+            "inches"), height = unit(dimension, "inches")))
+        for (k in 1:length(weights)) {
+            for (i in 1:neuron.count[k]) {
+                y.position[k] <- y.position[k] + y.step[k]
+                y.tmp <- 0
+                for (j in 1:neuron.count[k + 1]) {
+                  y.tmp <- y.tmp + y.step[k + 1]
+                  result <- calculate.delta(c(x.position[k], 
+                    x.position[k + 1]), c(y.position[k], y.tmp), 
+                    radius)
+                  x <- c(x.position[k], x.position[k + 1] - result[1])
+                  y <- c(y.position[k], y.tmp + result[2])
+                  grid.lines(x = x, y = y, arrow = arrow(length = unit(0.15, 
+                    "cm"), type = "closed"), gp = gpar(fill = col.hidden.synapse, 
+                    col = col.hidden.synapse, ...))
+                  if (show.weights) 
+                    draw.text(label = weights[[k]][neuron.count[k] - 
+                      i + 2, neuron.count[k + 1] - j + 1], x = c(x.position[k], 
+                      x.position[k + 1]), y = c(y.position[k], 
+                      y.tmp), xy.null = 1.25 * result, color = col.hidden.synapse, 
+                      fontsize = fontsize - 2, ...)
+                }
+                if (k == 1) {
+                  grid.lines(x = c((x.position[1] - arrow.length), 
+                    x.position[1] - radius), y = y.position[k], 
+                    arrow = arrow(length = unit(0.15, "cm"), 
+                      type = "closed"), gp = gpar(fill = col.entry.synapse, 
+                      col = col.entry.synapse, ...))
+                  draw.text(label = entry.label[(neuron.count[1] + 
+                    1) - i], x = c((x.position - arrow.length), 
+                    x.position[1] - radius), y = c(y.position[k], 
+                    y.position[k]), xy.null = c(0, 0), color = col.entry.synapse, 
+                    fontsize = fontsize, ...)
+                  grid.circle(x = x.position[k], y = y.position[k], 
+                    r = radius, gp = gpar(fill = "white", col = col.entry, 
+                      ...))
+                }
+                else {
+                  grid.circle(x = x.position[k], y = y.position[k], 
+                    r = radius, gp = gpar(fill = "white", col = col.hidden, 
+                      ...))
+                }
+            }
+        }
+        out <- length(neuron.count)
+        for (i in 1:neuron.count[out]) {
+            y.position[out] <- y.position[out] + y.step[out]
+            grid.lines(x = c(x.position[out] + radius, x.position[out] + 
+                arrow.length), y = y.position[out], arrow = arrow(length = unit(0.15, 
+                "cm"), type = "closed"), gp = gpar(fill = col.out.synapse, 
+                col = col.out.synapse, ...))
+            draw.text(label = out.label[(neuron.count[out] + 
+                1) - i], x = c((x.position[out] + radius), x.position[out] + 
+                arrow.length), y = c(y.position[out], y.position[out]), 
+                xy.null = c(0, 0), color = col.out.synapse, fontsize = fontsize, 
+                ...)
+            grid.circle(x = x.position[out], y = y.position[out], 
+                r = radius, gp = gpar(fill = "white", col = col.out, 
+                  ...))
+        }
+        if (intercept) {
+            for (k in 1:length(weights)) {
+                y.tmp <- 0
+                x.intercept <- (x.position[k + 1] - x.position[k]) * 
+                  intercept.factor + x.position[k]
+                for (i in 1:neuron.count[k + 1]) {
+                  y.tmp <- y.tmp + y.step[k + 1]
+                  result <- calculate.delta(c(x.intercept, x.position[k + 
+                    1]), c(y.intercept, y.tmp), radius)
+                  x <- c(x.intercept, x.position[k + 1] - result[1])
+                  y <- c(y.intercept, y.tmp + result[2])
+                  grid.lines(x = x, y = y, arrow = arrow(length = unit(0.15, 
+                    "cm"), type = "closed"), gp = gpar(fill = col.intercept, 
+                    col = col.intercept, ...))
+                  xy.null <- cbind(x.position[k + 1] - x.intercept - 
+                    2 * result[1], -(y.tmp - y.intercept + 2 * 
+                    result[2]))
+                  if (show.weights) 
+                    draw.text(label = weights[[k]][1, neuron.count[k + 
+                      1] - i + 1], x = c(x.intercept, x.position[k + 
+                      1]), y = c(y.intercept, y.tmp), xy.null = xy.null, 
+                      color = col.intercept, alignment = c("right", 
+                        "bottom"), fontsize = fontsize - 2, ...)
+                }
+                grid.circle(x = x.intercept, y = y.intercept, 
+                  r = radius, gp = gpar(fill = "white", col = col.intercept, 
+                    ...))
+                grid.text(1, x = x.intercept, y = y.intercept, 
+                  gp = gpar(col = col.intercept, ...))
+            }
+        }
+        if (information) 
+            grid.text(paste("Error: ", round(result.matrix[rep, 
+                "error"], 6), "   Steps: ", result.matrix[rep, 
+                "steps"], sep = ""), x = 0.5, y = information.pos, 
+                just = "bottom", gp = gpar(fontsize = fontsize + 
+                  2, ...))
+        popViewport()
+        if (!is.null(file)) {
+            weight.plot <- recordPlot()
+            save(weight.plot, file = file)
+        }
+    }
+}
+calculate.delta <-
+function (x, y, r) 
+{
+    delta.x <- x[2] - x[1]
+    delta.y <- y[2] - y[1]
+    x.null <- r/sqrt(delta.x^2 + delta.y^2) * delta.x
+    if (y[1] < y[2]) 
+        y.null <- -sqrt(r^2 - x.null^2)
+    else if (y[1] > y[2]) 
+        y.null <- sqrt(r^2 - x.null^2)
+    else y.null <- 0
+    c(x.null, y.null)
+}
+draw.text <-
+function (label, x, y, xy.null = c(0, 0), color, alignment = c("left", 
+    "bottom"), ...) 
+{
+    x.label <- x[1] + xy.null[1]
+    y.label <- y[1] - xy.null[2]
+    x.delta <- x[2] - x[1]
+    y.delta <- y[2] - y[1]
+    angle = atan(y.delta/x.delta) * (180/pi)
+    if (angle < 0) 
+        angle <- angle + 0
+    else if (angle > 0) 
+        angle <- angle - 0
+    if (is.numeric(label)) 
+        label <- round(label, 5)
+    pushViewport(viewport(x = x.label, y = y.label, width = 0, 
+        height = , angle = angle, name = "vp1", just = alignment))
+    grid.text(label, x = 0, y = unit(0.75, "mm"), just = alignment, 
+        gp = gpar(col = color, ...))
+    popViewport()
+}
+```
+
+# Neural Network
+```{r}
+#https://stats.stackexchange.com/questions/181/how-to-choose-the-number-of-hidden-layers-and-nodes-in-a-feedforward-neural-netw
+
+normalize <- function(x, column) {
+  return ((x - min(showsDF[,column])) / (max(showsDF[,column]) - min(showsDF[,column])))
+}
+
+denormalize <- function(x) 
+{
+  return ((x * (max(showsDF$imdb_score) - min(showsDF$imdb_score))) + min(showsDF$imdb_score))
+}
+
+normalShowsDF <- showsDF
+normalShowsDF$imdb_score <- normalize(showsDF$imdb_score, "imdb_score")
+normalShowsDF$release_year <- normalize(showsDF$release_year, "release_year")
+normalShowsDF$runtime <- normalize(showsDF$runtime, "runtime")
+normalShowsDF$imdb_votes <- normalize(showsDF$imdb_votes, "imdb_votes")
+normalShowsDF <- normalShowsDF %>% select(imdb_score, release_year, runtime, imdb_votes, animation, comedy, documentation, drama, european, family, history, reality, scifi)
+
+netList <- createDataPartition(y=normalShowsDF$imdb_score, p=.70, list=FALSE)
+netTraining <- normalShowsDF[netList,]
+netTesting <- normalShowsDF[-netList,]
+
+netModel <- neuralnet(imdb_score ~ release_year + runtime + imdb_votes + animation + documentation + drama + family + reality + scifi, data=netTraining, hidden=2, linear.output=TRUE, threshold=0.01)
+
+png(file="neural-net.png", width=4800, height=4800, units="px", pointsize=12, bg="white", res=300, restoreConsole=TRUE)
+plot(netModel)
+dev.off()
+
+nnPred <- predict(netModel, newdata=netTesting)
+
+rSquared <- R2_Score(nnPred, netTesting$imdb_score)
+```
+
+#Neural Network Data Normalization, Prediction and Plot
+```{r}
+#build vector of predicted values
+normalExPredict <- externalShows
+normalExPredict$release_year <- normalize(normalExPredict$release_year, "release_year")
+normalExPredict$runtime <- normalize(normalExPredict$runtime, "runtime")
+normalExPredict$imdb_votes <- normalize(normalExPredict$imdb_votes, "imdb_votes")
+normalExPredict <- normalExPredict %>% select(release_year, runtime, imdb_votes, animation, comedy, documentation, drama, european, family, history, reality, scifi)
+externalResults <- predict(netModel, normalExPredict)
+
+showPredictions <- denormalize(externalResults)
+
+#build vector of show names
+showNames <- c("Star Trek", "Kojak", "Law and Order", "The Office", "Sex and the City", "Seinfeld", "Westworld", "X-Files")
+#build vector of actual scores
+showScores <- c(8.4, 7.1, 7.8, 9, 7.3, 8.9, 8.5, 8.6)
+#build display DF with both scores and predicted scores in separate rows with a filterable field
+status1<-rep(c(1),each=length(showNames))
+status0<-rep(c(0),each=length(showNames))
+resultsDF <- data.frame(name=c(showNames, showNames), values=c(showScores, showPredictions), status=c(status1, status0))
+
+rSquared <- round(rSquared, digits=3)
+ggplot(resultsDF) + 
+  theme(axis.title.x = element_text(margin=margin(t=10))) +
+  aes(x=name,y=values) + 
+  geom_point(data=resultsDF[resultsDF$status==1,], color=syracuseOrange, size=5) + 
+  geom_point(data=resultsDF[resultsDF$status==0,], color=syracuseBlue, size=4, show.legend = FALSE) + 
+  labs(x=paste("Test R-squared:", rSquared), y="") + 
+  ggtitle("Predicted IMDB Score (Blue) vs Actual (Orange) for Neural Network Model")
+```
+
+
+
+
+# Linear Model to Predict IMDB Rating for Movies
+```{r}
+multipleLinearModel <- lm(formula = imdb_score ~ release_year + runtime + imdb_votes + genre_count + age_certification, data=moviesDF)
+summary(multipleLinearModel)
+```
