@@ -1,0 +1,151 @@
+---
+title: "Intro to Data Science - HW 10 - Shiny"
+output: html_notebook
+runtime: shiny
+---
+
+##### Copyright Jeffrey Stanton, Jeffrey Saltz, Christopher Dunham, and Jasmina Tacheva
+
+```{r}
+# Enter your name here: Patrick Walsh
+```
+
+### Attribution statement: (choose only one and delete the rest)
+
+```{r}
+# 1. I did this homework by myself, with help from the book and the professor.
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+#install.packages("shiny")
+library(tidyverse)
+library(shiny)
+```
+
+At a high level, we want to create a scatter plot, where the user can select what is the x axis and the y axis of the scatter plot. We will use the same dataset as used in our first ggplot homework.
+
+The size and color will be represented by the year attribute, and the user will be able to choose one of the following (for  the x and the y axis):
+new_sp_m014
+new_sp_f014
+new_sp_m65
+new_sp_f65
+
+## Read in the same dataset we used for the ggplot homework
+
+The file is: "https://intro-datascience.s3.us-east-2.amazonaws.com/who.csv" and store it in the *tb* dataframe
+```{r}
+tb <- read_csv("https://intro-datascience.s3.us-east-2.amazonaws.com/who.csv")
+```
+## Clean up the dataset, just like we did in the ggplot homework.
+
+First, remove na's from iso2
+```{r}
+isoNotNA <- !is.na(tb$iso2)
+tb <- tb %>% filter(isoNotNA)
+glimpse(tb)
+```
+
+Now create the dataframe 'tbCan', which is the iso2 for canada (CA)
+```{r}
+isoIsCA <- tb$iso2=="CA"
+tbCan <- tb[isoIsCA,]
+glimpse(tbCan)
+```
+
+We will need the imputeTS package (only install if needed)
+```{r}
+#install.packages('imputeTS')
+library(imputeTS)
+```
+
+Now we can use 'na_interpolation for new_sp_m014
+```{r}
+tbCan$new_sp_m04 <- na_interpolation(tbCan$new_sp_m04)
+```
+
+## Create the User Interface of our shiny app
+
+```{r}
+# Define UI for application (called ui)
+# Use a 'fluidPage' using the sidebarLayout, and your sidePanel and mainPanel
+
+choices <- c("new_sp_m014", "new_sp_f014", "new_sp_m65", "new_sp_f65")
+
+ui <- fluidPage(
+
+  # Application title
+  titlePanel("Exploring Data"),
+  
+  # Using sidebarLayout 
+  sidebarLayout(
+
+      # Define the sidebarPanel, which has two dropdown boxes (use 'selectInput'), 
+      # one for the x-axis and the other is the y-axis for the scatter plot
+      sidebarPanel(
+        selectInput(
+          "yaxis", 
+          "Y-Axis", 
+          choices,
+          selected = NULL,
+          multiple = FALSE,
+          selectize = TRUE,
+          width = NULL,
+          size = NULL),
+        selectInput(
+          "xaxis", 
+          "X-Axis", 
+          choices,
+          selected = NULL,
+          multiple = FALSE,
+          selectize = TRUE,
+          width = NULL,
+          size = NULL)
+        
+      ),
+      
+      # Create the mainPanel to show the scatter plot
+      mainPanel(
+        plotOutput("scatterPlot")
+      )
+   )
+)
+```
+
+## Now let's define the server part of the Shiny app
+
+```{r}
+server <- function(input, output) 
+{
+  
+  # output the plot with renderPlot()
+  
+  # inside the renderPlot() function you would want to:
+     ## Use the input from the 2 selectInput() created in the UI portion to filter data from the tbCan dataframe
+     ## and make the scatteplot with ggplot2. The scatterplot will be automatically updated whenever there is 
+     ## change in one of the selectInput()
+  
+     
+    output$scatterPlot <- renderPlot({
+      xvals <- unlist(tbCan[,input$xaxis])
+      yvals <- unlist(tbCan[,input$yaxis])
+      xlabel <- as.character(input$xaxis)
+      ylabel <- as.character(input$yaxis)
+      ggplot(tbCan) + 
+        aes(x=xvals, y=yvals, color=year, size=year) +
+        xlab(xlabel) +
+        ylab(ylabel) + 
+        geom_point()
+    })
+}
+
+```
+
+## Now run the shiny App
+```{r}
+# Run the application 
+shinyApp(ui = ui, server = server)
+```
