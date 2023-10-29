@@ -1,0 +1,323 @@
+---
+title: "IST707-HW2"
+output: html_document
+date: "2023-10-18"
+---
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+# Requires tidyverse package
+
+
+```{r cars}
+library(tidyverse)
+
+storyteller<- read_csv("C:/Users/Patrick/Syracuse_courses/IST_707/week_3/data-storyteller.csv", na = c(""))
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+str(storyteller)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+storyteller$School<-factor(storyteller$School)
+
+#The section column is of the Numeric type and should be be a factor instead
+
+storyteller$Section<-factor(storyteller$Section)
+
+#Each of the remaining columns is a discrete count of the students in each category.
+#As it is not continuous the columns 'Very Ahead', 'Middling', 'Behind', 'More behind', 'Very behind'
+#and 'Completed' should all be integers.
+
+storyteller$`Very Ahead +5`<-as.integer(storyteller$`Very Ahead +5`)
+storyteller$`Middling +0`<-as.integer(storyteller$`Middling +0`)
+storyteller$`Behind -1-5`<-as.integer(storyteller$`Behind -1-5`)
+storyteller$`More Behind -6-10`<-as.integer(storyteller$`More Behind -6-10`)
+storyteller$`Very Behind -11`<-as.integer(storyteller$`Very Behind -11`)
+storyteller$Completed<-as.integer(storyteller$Completed)
+```
+
+
+```{r}
+storytellerTemp<-storyteller[,c(2,1,8,3,4,5,6,7)]
+
+storyteller<-storytellerTemp
+
+#displaying top 5 rows
+head(storyteller)
+```
+
+
+```{r}
+str(storyteller)
+```
+
+
+```{r}
+#Checking for any NA values
+sum(is.na(storyteller))
+```
+
+
+```{r}
+# Creating a bar chart to show the number of sections from each school
+SchoolValues<-c(length(which(storyteller$School=='A')), 
+                length(which(storyteller$School=='B')), 
+                length(which(storyteller$School=='C')), 
+                length(which(storyteller$School=='D')), 
+                length(which(storyteller$School=='E')))
+barplot(SchoolValues, names.arg = c('A', 'B', 'C', 'D', 'E'), main='Number of sections Per School')
+```
+
+
+```{r}
+#plotting section and Completed and summarizing the data
+
+barplot(storyteller$Completed, main='#completed students / section', names.arg = c(1:30))
+```
+
+
+```{r}
+summary(storyteller$Completed)
+```
+
+
+```{r}
+#Plotting section and Very Ahead and summarizing
+
+barplot(storyteller$`Very Ahead +5`, main='number of very ahead students per section', names.arg = c(1:30))
+```
+
+
+```{r}
+summary(storyteller$`Very Ahead +5`)
+```
+
+
+```{r}
+#plotting section and Middling and summarizing
+
+barplot(storyteller$`Middling +0`, main='number of Middling students per section', names.arg = c(1:30))
+```
+
+
+```{r}
+summary(storyteller$`Middling +0`)
+```
+
+
+```{r}
+#plotting section and Behind and summarizing
+
+barplot(storyteller$`Behind -1-5`, main='number of Behind students per section', names.arg = c(1:30))
+```
+
+
+```{r}
+summary(storyteller$`Behind -1-5`)
+```
+
+
+```{r}
+#plotting section and More Behind
+
+barplot(storyteller$`More Behind -6-10`, main='number of More Behind students per section', names.arg = c(1:30))
+```
+
+
+```{r}
+summary(storyteller$`More Behind -6-10`)
+```
+
+
+```{r}
+#Plotting section and Very Behind
+
+barplot(storyteller$`Very Behind -11`, main='number of Very Behind students per section', names.arg = c(1:30))
+```
+
+
+```{r}
+summary(storyteller$`Very Behind -11`)
+```
+
+
+```{r}
+#determining the number of students in each category
+StudentSums<-colSums(storyteller[,3:8])
+print(StudentSums)
+print(sum(StudentSums))
+```
+
+
+```{r}
+#determining the amount of students in each section
+
+SectionSums<-rowSums(storyteller[,3:8])
+
+data.frame(SectionSums)
+```
+
+
+```{r}
+#Creating a barplot to show distribution
+
+StudentSums<-colSums(storyteller[,3:8])
+barplot(StudentSums, main="Student totals across all categories")
+```
+
+
+```{r}
+StudentSums/sum(StudentSums)
+```
+
+
+```{r}
+plot(storyteller$Completed, storyteller$`Middling +0`)
+```
+
+
+```{r}
+storytellerA<-storyteller[which(storyteller$School == "A"),]
+storytellerB<-storyteller[which(storyteller$School == "B"),]
+storytellerC<-storyteller[which(storyteller$School == "C"),]
+storytellerD<-storyteller[which(storyteller$School == "D"),]
+storytellerE<-storyteller[which(storyteller$School == "E"),]
+
+StudentSumsA<-colSums(storytellerA[3:8])
+StudentSumsA
+```
+
+
+```{r}
+barplot(StudentSumsA, main = "School A")
+```
+
+
+```{r}
+StudentSumsB<-colSums(storytellerB[3:8])
+StudentSumsB
+```
+
+
+```{r}
+barplot(StudentSumsB, main = "School B")
+```
+
+
+```{r}
+StudentSumsC<-colSums(storytellerC[3:8])
+StudentSumsC
+```
+
+
+```{r}
+barplot(StudentSumsC, main = "School C")
+```
+
+
+```{r}
+StudentSumsD<-colSums(storytellerD[3:8])
+StudentSumsD
+```
+
+
+```{r}
+barplot(StudentSumsD, main = "School D")
+```
+
+
+```{r}
+StudentSumsE<-colSums(storytellerE[3:8])
+StudentSumsE
+```
+
+
+```{r}
+barplot(StudentSumsE, main = "School E")
+```
+
+
+```{r}
+sum(StudentSumsB)/sum(StudentSums)
+```
+
+
+```{r}
+sum(StudentSumsD)/sum(StudentSums)
+```
+
+
+```{r}
+#looking at the data to determine quality sections
+barplot(storytellerA$Completed, names.arg =c(1:13),ylim=c(0,25), main = "School A Students Completed by Section")
+```
+
+
+```{r}
+barplot(storytellerB$Completed, names.arg =c(1:12),ylim=c(0,25), main = "Students Completed by Section")
+```
+
+
+```{r}
+```
+
+
+```{r}
+rowSums(storytellerB[,3:8])
+```
+
+
+```{r}
+barplot(storytellerA$`Behind -1-5`+storytellerA$`More Behind -6-10`+storytellerA$`Very Behind -11`, names.arg =c(1:13), ylim=c(0,70), main = "School A Students Behind by Section")
+```
+
+
+```{r}
+# Define the two points
+```
+
+
+```{r}
+point1 <- c(22, 1, 42, 10)
+point2 <- c(20, 0, 36, 8)
+
+# Calculate the Euclidean distance
+euclidean_distance <- sqrt(sum((point1 - point2)^2))
+cat("Euclidean Distance:", euclidean_distance, "\n")
+```
+
+
+```{r}
+# Calculate the Manhattan distance
+manhattan_distance <- sum(abs(point1 - point2))
+cat("Manhattan Distance:", manhattan_distance, "\n")
+```
+
+
+```{r}
+# Define functions for dot product and vector magnitude
+dot_product <- function(v1, v2) {
+  sum(v1 * v2)
+}
+
+vector_magnitude <- function(v) {
+  sqrt(sum(v^2))
+}
+
+# Calculate the cosine similarity
+cosine_similarity <- dot_product(point1, point2) / (vector_magnitude(point1) * vector_magnitude(point2))
+cat("Cosine Similarity:", cosine_similarity, "\n")
+
+```
